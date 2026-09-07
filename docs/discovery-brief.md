@@ -218,3 +218,40 @@ So the earlier conclusion holds, now on evidence rather than on absence of a doc
 TCP 2382 exchange is not publicly specified and is not MC-SQLR over TCP. **D4 stands** — pin
 the instance port in `msmdsrv.ini` and address it directly. A firewall rule is needed either
 way, so this costs the operator nothing.
+
+
+## Why the post-handshake Discover was reset — SOLVED (2026-09-07)
+
+Captured a complete, working ADOMD.NET 160 session against the live instance through a
+logging TCP relay (ADOMD -> relay -> 2383). The client-to-server records tell the whole story:
+
+| record | TYPE | OPTIONS | payload |
+|---|---|---|---|
+| 1 | `text/xml` | `0x10` = RESP_XPRESS | plaintext XML `Authenticate` (BOM-prefixed) |
+| 2 | `text/xml` | `0x11` = NEGO \| RESP_XPRESS | plaintext XML `Authenticate` |
+| 3+ | `text/xml` | `0x11` = NEGO \| RESP_XPRESS | **binary — GSS-sealed, not XML** |
+
+**Every message after the handshake is sealed.** That is why all six of our plaintext variants
+were reset: the server was never going to accept cleartext XML post-authentication, no matter
+what SOAP header or NEGO bit accompanied it. Our one GSS-wrap attempt was the right instinct
+but wrong in detail — it did not set RESP_XPRESS, and the sealed payload carries its own small
+framing header (record 3 begins `03 00 10 00` before the ciphertext) that we did not reproduce.
+
+**Two corrections to earlier conclusions:**
+
+- **T031 needs restating.** Clear-text `text/xml` is accepted *for the handshake only*. It is
+  NOT the steady-state encoding. The DIME TYPE stays `text/xml` throughout, so the type field
+  alone does not tell you whether the payload is plaintext — which is exactly how this misled
+  us. [MS-BINXML] is still out of scope (the sealed payload is not binary XML), but "clear text
+  works" was too broad a reading.
+- **`check_negotiated()` is wrong as written.** The real client sets `RESP_XPRESS` from its
+  very first record, so our guard would reject a correct exchange. The bit is a client
+  *request*, not a server imposition; only the server's chosen response encoding should be
+  enforced.
+
+**Next: implement sealing.** Decode the small pre-ciphertext header on record 3, then wrap
+each post-handshake payload with the completed context. The capture is the reference.
+
+**The capture was NOT committed**, and must never be: records 1 and 2 contain real
+`SspiHandshake` tokens carrying the principal, realm and machine name. It was deleted from the
+server after analysis. This is D6 in practice — the reason synthetic handshake fixtures exist.
