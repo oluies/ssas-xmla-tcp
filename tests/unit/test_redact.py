@@ -75,3 +75,21 @@ def test_removes_nt_style_domain_account():
 def test_drive_letter_paths_survive():
     out = make_scrubber()("see C:" + chr(92) + "Windows for details")
     assert "Windows" in out
+
+
+def test_short_host_does_not_mangle_ordinary_words():
+    """A host named 'h' once turned 'The' into 'T<HOST>e'."""
+    out = make_scrubber(host="h")("The syntax for the query is incorrect.")
+    assert out == "The syntax for the query is incorrect."
+
+
+def test_host_is_still_removed_when_it_stands_alone():
+    out = make_scrubber(host="h")("connected to h on port 2383")
+    assert "<HOST>" in out
+    assert " h " not in out
+
+
+def test_hostname_inside_a_longer_word_is_left_alone():
+    out = make_scrubber(host="sql")("the sqlserver process and sql itself")
+    assert "sqlserver" in out
+    assert "<HOST>" in out

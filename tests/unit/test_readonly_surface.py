@@ -24,6 +24,7 @@ def test_session_exposes_only_read_operations():
     public = [n for n in dir(client.Session) if not n.startswith("_")]
     assert set(public) <= {
         "open", "close", "discover", "discover_datasources", "execute",
+        "catalogs", "tables", "columns",
         "target", "credential", "terms", "state",
     }, public
 

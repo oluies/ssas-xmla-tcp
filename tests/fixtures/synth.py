@@ -66,3 +66,33 @@ SOAP_FAULT = """<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Bod
 <faultstring>Either the user, DOMAIN\\reader, does not have access to the
 AWTabular database, or the database does not exist.</faultstring>
 </Fault></Body></Envelope>"""
+
+
+DBSCHEMA_CATALOGS_RESPONSE = """<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>
+<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis"><return>
+<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">
+<row><CATALOG_NAME>AWTabular</CATALOG_NAME><DESCRIPTION>Tabular model</DESCRIPTION>
+<COMPATIBILITY_LEVEL>1600</COMPATIBILITY_LEVEL></row>
+<row><CATALOG_NAME>AWMultidim</CATALOG_NAME><DESCRIPTION>Cube</DESCRIPTION></row>
+</root></return></DiscoverResponse></Body></Envelope>"""
+
+EMPTY_ROWSET_RESPONSE = (
+    '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
+    '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+    '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset"/></return>'
+    "</DiscoverResponse></Body></Envelope>"
+)
+
+EXECUTE_RESPONSE = """<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>
+<ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis"><return>
+<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">
+<row><ProductKey>1</ProductKey><SalesAmount>1234.56</SalesAmount></row>
+<row><ProductKey>2</ProductKey><SalesAmount>78.90</SalesAmount></row>
+</root></return></ExecuteResponse></Body></Envelope>"""
+
+SYNTAX_FAULT = (
+    '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body><Fault>'
+    "<faultcode>XMLAnalysisError.0xC1210003</faultcode>"
+    "<faultstring>Query (1, 8) The syntax for the query is incorrect.</faultstring>"
+    "</Fault></Body></Envelope>"
+)

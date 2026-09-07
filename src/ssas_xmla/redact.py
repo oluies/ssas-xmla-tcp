@@ -37,11 +37,16 @@ def make_scrubber(
     """
     literals: list[tuple[re.Pattern[str], str]] = []
     for token, label in ((host, "HOST"), (user, "USER"), (realm, "REALM")):
-        if token:
-            bare = re.sub(r"^\w+://", "", token).strip("/").split("/", 1)[0]
-            literals.append((re.compile(re.escape(bare), re.I), f"<{label}>"))
-            if bare != token:
-                literals.append((re.compile(re.escape(token), re.I), f"<{label}>"))
+        if not token:
+            continue
+        bare = re.sub(r"^\w+://", "", token).strip("/").split("/", 1)[0]
+        for candidate in dict.fromkeys((bare, token)):
+            # Word-bounded: an unbounded literal mangles ordinary prose. A host
+            # named "h" turned "The" into "T<HOST>e"; a real host named "sql" or
+            # "db" would corrupt every message mentioning those letters.
+            literals.append(
+                (re.compile(rf"(?<!\w){re.escape(candidate)}(?!\w)", re.I), f"<{label}>")
+            )
 
     def scrub(text: str) -> str:
         if not text:

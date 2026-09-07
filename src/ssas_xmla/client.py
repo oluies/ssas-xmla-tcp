@@ -32,12 +32,45 @@ _DENIED_MARKERS = (
 )
 
 
+def _catalog_kind(row: dict) -> str:
+    """Infer the model kind from a DBSCHEMA_CATALOGS row.
+
+    Tabular models report a compatibility level; multidimensional ones do not.
+    Where neither signal is present the answer is "unknown" rather than a guess.
+    """
+    level = row.get("COMPATIBILITY_LEVEL") or row.get("CompatibilityLevel")
+    if level:
+        try:
+            return "tabular" if int(level) >= 1100 else "multidimensional"
+        except ValueError:
+            return "unknown"
+    kind = (row.get("CATALOG_TYPE") or "").strip().lower()
+    if kind in ("tabular", "multidimensional"):
+        return kind
+    return "unknown"
+
+
 class State(Enum):
     UNCONNECTED = "unconnected"
     NEGOTIATED = "negotiated"
     AUTHENTICATED = "authenticated"
     CLOSED = "closed"
     FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class Catalog:
+    """A model within an instance, as the server reports it.
+
+    `kind` is derived rather than asserted: DBSCHEMA_CATALOGS does not name the
+    model type directly, so it is inferred from the rowset and left as "unknown"
+    when the server gives nothing to go on. Guessing here would be worse than
+    saying so — the caller can still ask the instance directly.
+    """
+
+    name: str
+    description: str = ""
+    kind: str = "unknown"  # "tabular" | "multidimensional" | "unknown"
 
 
 @dataclass(frozen=True)
@@ -129,6 +162,32 @@ class Session:
     def discover_datasources(self) -> Rowset:
         """The reader-accessible probe this milestone exists to prove."""
         return self.discover("DISCOVER_DATASOURCES")
+
+    def catalogs(self) -> list[Catalog]:
+        """Every catalog this account may see.
+
+        An empty list means "none visible to this account" and is a valid answer,
+        distinct from AuthorizationError (FR-007) — a server that refuses raises,
+        a server with nothing to show returns nothing.
+        """
+        rows = self.discover("DBSCHEMA_CATALOGS")
+        return [
+            Catalog(
+                name=row.get("CATALOG_NAME", ""),
+                description=row.get("DESCRIPTION", ""),
+                kind=_catalog_kind(row),
+            )
+            for row in rows
+            if row.get("CATALOG_NAME")
+        ]
+
+    def tables(self, catalog: str) -> Rowset:
+        """The tables or cube-equivalents in one catalog."""
+        return self.discover("DBSCHEMA_TABLES", catalog=catalog)
+
+    def columns(self, catalog: str) -> Rowset:
+        """The columns of every table in one catalog, with their types."""
+        return self.discover("DBSCHEMA_COLUMNS", catalog=catalog)
 
     def execute(self, statement: str, catalog: str | None = None) -> Rowset:
         """Run a read-only analytic statement.
