@@ -255,3 +255,35 @@ each post-handshake payload with the completed context. The capture is the refer
 **The capture was NOT committed**, and must never be: records 1 and 2 contain real
 `SspiHandshake` tokens carrying the principal, realm and machine name. It was deleted from the
 server after analysis. This is D6 in practice — the reason synthetic handshake fixtures exist.
+
+
+### The sealed-message framing — measured, not yet reproduced
+
+Two independent captures of a real ADOMD.NET client agree on the layout of the first sealed
+message (record 3). Byte offsets, with the two captures side by side:
+
+    offset  0  1  2  3 | 4  5  6 | 7 .. 22                          | 23 ...
+    cap A   03 00 10 00 | 8e 70 87 | 01 00 00 00 <8-byte checksum> 01 00 00 00 | 08 ...
+    cap B   03 00 10 00 | 13 2f 2f | 01 00 00 00 <8-byte checksum> 01 00 00 00 | 08 ...
+
+- Bytes 0-3 are **constant**: `03 00 10 00`, reading naturally as uint16(3), uint16(16) where
+  16 is the NTLM signature length.
+- Bytes 4-6 **vary between captures** — three bytes, not obviously a length or a constant.
+- Bytes 7-22 are a textbook NTLM signature: version `01 00 00 00`, 8-byte checksum, seqnum 1.
+  `pyspnego.wrap_winrm()` produces a byte-for-byte structurally identical 16-byte header, so
+  our signature generation is right; only its placement is not.
+
+**Framings tried live, all reset:** header+sig+data; header+3 zero bytes+sig+data;
+sig+data with no header; header+data+sig; header+3-byte length+sig+data.
+
+**The most promising untested lead is not framing at all.** A real client negotiates specific
+NTLM flags — `NTLMSSP_NEGOTIATE_SEAL`, `NTLMSSP_NEGOTIATE_KEY_EXCH`, 128-bit — and if
+`pyspnego`'s default context does not request confidentiality, the session key material is not
+set up for the RC4 sealing the server expects. Every sealed message we send would then be
+garbage to it *regardless of framing*, which fits the evidence better than five wrong framings
+in a row does. Check `spnego.client(..., options=...)` / `context_req` for confidentiality
+before trying more byte layouts.
+
+Both captures were deleted from the server and locally after analysis. They contain real
+`SspiHandshake` tokens carrying the principal, realm and machine name, and MUST NOT be
+committed (D6).
