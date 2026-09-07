@@ -1,4 +1,5 @@
 """US3: read-only query execution."""
+
 import pytest
 
 from ssas_xmla.client import ConnectionTarget, connect

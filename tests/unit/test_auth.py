@@ -1,4 +1,5 @@
 """Handshake tests driven by SYNTHETIC tokens (research.md D6)."""
+
 import base64
 import logging
 
@@ -42,9 +43,7 @@ def _responder(server_tokens):
             tok = next(it)
         except StopIteration:
             tok = b""
-        return synth.AUTHENTICATE_RESPONSE.format(
-            token=base64.b64encode(tok).decode()
-        )
+        return synth.AUTHENTICATE_RESPONSE.format(token=base64.b64encode(tok).decode())
 
     return send, sent
 

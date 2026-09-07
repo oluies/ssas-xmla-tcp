@@ -9,6 +9,7 @@ offline suite stays hermetic (constitution III):
     SSAS_MECHANISM  kerberos (default) or ntlm
     SSAS_CATALOG    optional catalog for the query tests
 """
+
 from __future__ import annotations
 
 import os

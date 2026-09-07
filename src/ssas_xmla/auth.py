@@ -15,6 +15,7 @@ Kerberos works.
 Nothing in this module may log a token. A SPNEGO token carries the principal, the
 realm and the target service (constitution I).
 """
+
 from __future__ import annotations
 
 import base64
@@ -91,9 +92,7 @@ def build_context(
             protocol=protocol,
         )
     except Exception as exc:  # pragma: no cover - environment dependent
-        raise AuthenticationError(
-            f"could not initialise a {protocol} security context"
-        ) from exc
+        raise AuthenticationError(f"could not initialise a {protocol} security context") from exc
 
 
 def handshake(
@@ -117,14 +116,10 @@ def handshake(
         if context.complete and not out_token:
             return
         if out_token is None:
-            raise AuthenticationError(
-                "security context produced no token and did not complete"
-            )
+            raise AuthenticationError("security context produced no token and did not complete")
         response = send_authenticate(base64.b64encode(out_token).decode("ascii"))
         if context.complete:
             return
         encoded = extract_token(response)
         in_token = base64.b64decode(encoded) if encoded else None
-    raise AuthenticationError(
-        f"handshake did not complete within {max_rounds} rounds"
-    )
+    raise AuthenticationError(f"handshake did not complete within {max_rounds} rounds")

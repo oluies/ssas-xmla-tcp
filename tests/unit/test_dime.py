@@ -15,12 +15,12 @@ def test_round_trip_single_record():
 def test_header_matches_the_specified_layout():
     encoded = dime.encode_message(b"abc")
     flags = encoded[0]
-    assert flags >> 3 == dime.VERSION      # MS-SSAS: VERSION MUST be 1
-    assert flags & 0x04                    # MB on the first record
-    assert flags & 0x02                    # ME on the last record
-    assert not flags & 0x01                # CF clear when not chunked
-    assert encoded[1] >> 4 == 1            # TYPE_T is 1 for a record starting a message
-    assert encoded[1] & 0x0F == 0          # RESERVED MUST be 0
+    assert flags >> 3 == dime.VERSION  # MS-SSAS: VERSION MUST be 1
+    assert flags & 0x04  # MB on the first record
+    assert flags & 0x02  # ME on the last record
+    assert not flags & 0x01  # CF clear when not chunked
+    assert encoded[1] >> 4 == 1  # TYPE_T is 1 for a record starting a message
+    assert encoded[1] & 0x0F == 0  # RESERVED MUST be 0
 
 
 def test_every_field_is_padded_to_a_four_byte_boundary():

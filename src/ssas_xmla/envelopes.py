@@ -8,6 +8,7 @@ Read-only by construction (constitution II): there is no builder here for Create
 Alter, Delete or Refresh, and no parameter through which a statement could become
 one. The capability is absent, not gated.
 """
+
 from __future__ import annotations
 
 from xml.sax.saxutils import escape
@@ -85,9 +86,7 @@ def discover(
     ).encode("utf-8")
 
 
-def execute(
-    statement: str, catalog: str | None = None, session_id: str | None = None
-) -> bytes:
+def execute(statement: str, catalog: str | None = None, session_id: str | None = None) -> bytes:
     return _EXECUTE.format(
         soap=SOAP_NS,
         xmla=XMLA_NS,

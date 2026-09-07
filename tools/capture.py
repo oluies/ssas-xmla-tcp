@@ -14,6 +14,7 @@ TWO RULES, both non-negotiable (constitution I, research.md D6):
   2. Everything written passes the scrubber first, and the leak gate must be re-run
      after regenerating fixtures.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,9 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             # Re-render rather than dumping raw bytes, so nothing unscrubbed escapes.
             lines = ["<rows>"]
             for row in result:
-                cells = "".join(
-                    f"<{k}>{scrub(v)}</{k}>" for k, v in row.items()
-                )
+                cells = "".join(f"<{k}>{scrub(v)}</{k}>" for k, v in row.items())
                 lines.append(f"  <row>{cells}</row>")
             lines.append("</rows>")
             path = out_dir / f"{name}.xml"

@@ -4,6 +4,7 @@ Sequences negotiate -> authenticate -> request, and turns server responses into 
 categorised errors of FR-007 so a caller can act on the category without parsing
 message text.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -128,14 +129,10 @@ class Session:
             user=self.credential.principal,
         )
         try:
-            chan = channel or SocketChannel(
-                self.target.host, self.target.port, self.target.timeout
-            )
+            chan = channel or SocketChannel(self.target.host, self.target.port, self.target.timeout)
             self._stream = MessageStream(chan)
             self.state = State.NEGOTIATED
-            ctx = context or auth.build_context(
-                self.credential, self.target.host, password
-            )
+            ctx = context or auth.build_context(self.credential, self.target.host, password)
             auth.handshake(ctx, self._send_authenticate)
             self.terms.protection = bool(getattr(ctx, "protection", False))
             self.state = State.AUTHENTICATED
@@ -208,9 +205,7 @@ class Session:
     # -- internals ------------------------------------------------------------
     def _require_authenticated(self) -> None:
         if self.state is not State.AUTHENTICATED:
-            raise AuthenticationError(
-                f"session is {self.state.value}, not authenticated"
-            )
+            raise AuthenticationError(f"session is {self.state.value}, not authenticated")
 
     def _send_authenticate(self, token_b64: str) -> str:
         assert self._stream is not None

@@ -1,4 +1,5 @@
 """FR-012: a server that declines clear-text XML must be reported, not worked around."""
+
 import pytest
 
 from ssas_xmla import dime

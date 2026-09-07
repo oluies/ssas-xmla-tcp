@@ -23,6 +23,7 @@ Content-type negotiation is the reason this library can stay small: binary XML
 [MS-BINXML] and XPRESS compression are OPTIONAL and negotiated, so we ask for
 clear-text XML and never implement either (research.md, D2).
 """
+
 from __future__ import annotations
 
 import struct
@@ -181,11 +182,9 @@ def check_negotiated(record_options: bytes, record_type: bytes) -> None:
         )
     if first & (OPT_REQ_XPRESS | OPT_RESP_XPRESS):
         raise NegotiationError(
-            "server selected XPRESS compression; this client negotiates "
-            "uncompressed text/xml only"
+            "server selected XPRESS compression; this client negotiates uncompressed text/xml only"
         )
     if record_type and record_type != TYPE_TEXT_XML:
         raise NegotiationError(
-            f"server replied with content type {record_type!r}, expected "
-            f"{TYPE_TEXT_XML!r}"
+            f"server replied with content type {record_type!r}, expected {TYPE_TEXT_XML!r}"
         )

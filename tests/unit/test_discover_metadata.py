@@ -1,4 +1,5 @@
 """US2: catalog listing and per-catalog structure."""
+
 import pytest
 
 from ssas_xmla.client import Catalog, connect

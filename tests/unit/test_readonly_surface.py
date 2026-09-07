@@ -3,6 +3,7 @@
 These assert the capability is absent from the codebase, so no argument, flag or
 mistake can reach a mutating command.
 """
+
 import inspect
 from pathlib import Path
 
@@ -23,9 +24,18 @@ def test_no_public_entry_point_names_a_mutating_operation():
 def test_session_exposes_only_read_operations():
     public = [n for n in dir(client.Session) if not n.startswith("_")]
     assert set(public) <= {
-        "open", "close", "discover", "discover_datasources", "execute",
-        "catalogs", "tables", "columns",
-        "target", "credential", "terms", "state",
+        "open",
+        "close",
+        "discover",
+        "discover_datasources",
+        "execute",
+        "catalogs",
+        "tables",
+        "columns",
+        "target",
+        "credential",
+        "terms",
+        "state",
     }, public
 
 

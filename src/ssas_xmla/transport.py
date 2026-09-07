@@ -5,6 +5,7 @@ methods; the real one wraps a socket, and tests supply recorded bytes. Every lay
 above therefore runs with sockets disabled (constitution III), with no stub server
 to keep in sync.
 """
+
 from __future__ import annotations
 
 import socket
@@ -114,9 +115,7 @@ class MessageStream:
                 return payload
             chunk = self._channel.recv(65536)
             if not chunk:
-                raise SsasConnectionError(
-                    "connection closed before a complete message arrived"
-                )
+                raise SsasConnectionError("connection closed before a complete message arrived")
             self._buf.extend(chunk)
 
     def _try_parse(self):

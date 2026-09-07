@@ -4,6 +4,7 @@ Also settles T031 — whether the server accepts the clear-text negotiation. A
 NegotiationError here is not a bug in this test: it means D2's assumption is wrong
 and the feature must be re-estimated before US2 work continues.
 """
+
 import pytest
 
 pytestmark = pytest.mark.integration

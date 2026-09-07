@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Europe/Stockholm",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3,
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "pyspnego is the ONLY runtime dependency, and it is the security layer -- it generates and consumes GSS/SPNEGO tokens. A bump changes authentication behaviour, so it gets its own PR and is never grouped or automerged.",
+      "matchPackageNames": ["pyspnego"],
+      "groupName": null,
+      "automerge": false,
+      "addLabels": ["security-surface"]
+    },
+    {
+      "description": "Dev tooling only runs in CI and cannot affect the wire protocol.",
+      "matchPackageNames": ["pytest", "pytest-socket", "ruff"],
+      "groupName": "dev tooling"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "pinDigests": false
+    }
+  ],
+  "pep621": { "enabled": true },
+  "vulnerabilityAlerts": { "labels": ["security"], "schedule": ["at any time"] }
+}

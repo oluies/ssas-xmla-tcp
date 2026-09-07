@@ -1,4 +1,5 @@
 """T046: read-only query execution against a real instance."""
+
 import os
 
 import pytest
@@ -17,7 +18,7 @@ def catalog():
 
 
 def test_a_trivial_dax_expression_evaluates(live_session, catalog):
-    result = live_session.execute("EVALUATE ROW(\"one\", 1)", catalog=catalog)
+    result = live_session.execute('EVALUATE ROW("one", 1)', catalog=catalog)
     assert len(result) == 1
 
 

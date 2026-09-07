@@ -3,6 +3,7 @@
 Answers one question for an operator — is this instance readable over the native
 binding, with no IIS in front of it? — and names the stage that failed if not.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,13 +69,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except AuthenticationError as exc:
         print(f"AUTHENTICATION FAILED: {exc}", file=sys.stderr)
-        print("Reached the server; identity not established. Check ticket or keytab.",
-              file=sys.stderr)
+        print(
+            "Reached the server; identity not established. Check ticket or keytab.", file=sys.stderr
+        )
         return 3
     except AuthorizationError as exc:
         print(f"AUTHORIZATION REFUSED: {exc}", file=sys.stderr)
-        print("Identity is fine; the account may not read. Check permissions.",
-              file=sys.stderr)
+        print("Identity is fine; the account may not read. Check permissions.", file=sys.stderr)
         return 5
     except ServerError as exc:
         print(f"SERVER REJECTED THE REQUEST: {exc}", file=sys.stderr)

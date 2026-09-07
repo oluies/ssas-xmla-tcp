@@ -3,6 +3,7 @@
 Needs both bindings configured for the same account and models. Skips unless
 SSAS_HTTP_ENDPOINT is set as well, since the HTTP side is a separate deployment.
 """
+
 import os
 
 import pytest
@@ -52,7 +53,5 @@ def test_catalog_listing_matches_the_http_binding(live_session, http_endpoint):
 
     from ssas_xmla import rowset
 
-    http = sorted(
-        row["CATALOG_NAME"] for row in rowset.parse(text) if row.get("CATALOG_NAME")
-    )
+    http = sorted(row["CATALOG_NAME"] for row in rowset.parse(text) if row.get("CATALOG_NAME"))
     assert native == http

@@ -1,4 +1,5 @@
 """SC-005: each of the failure categories, one test apiece."""
+
 import pytest
 
 from ssas_xmla import dime
@@ -66,9 +67,7 @@ def test_server_error_for_a_non_permission_fault():
 
 
 def test_negotiation_error_when_the_server_picks_binary_xml():
-    ch = BytesChannel(
-        synth.dime_message_with_options(b"<Envelope/>", dime.OPT_RESP_SX)
-    )
+    ch = BytesChannel(synth.dime_message_with_options(b"<Envelope/>", dime.OPT_RESP_SX))
     with pytest.raises(NegotiationError):
         connect("h", 2383, channel=ch, context=DoneContext())
 

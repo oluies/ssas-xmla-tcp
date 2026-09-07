@@ -6,6 +6,7 @@ often the machine name — a committed capture would be a disclosure that looks 
 an opaque blob, and no scrubber can reliably redact arbitrary token structure. The
 safe version is not to hold the bytes at all.
 """
+
 from __future__ import annotations
 
 from ssas_xmla import dime

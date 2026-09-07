@@ -5,6 +5,7 @@ handles GSS/SPNEGO tokens, which carry the principal, the realm and the target
 service. Nothing built from those may be logged, and no message body reaches a
 caller un-scrubbed.
 """
+
 from __future__ import annotations
 
 import re
@@ -24,9 +25,7 @@ _NT_ACCOUNT = re.compile(r"(?<![A-Za-z]:)\b[A-Za-z][A-Za-z0-9._-]+\\[A-Za-z0-9._
 # "org/soap" and turned every diagnostic URL into "<SPN>", mangling the server's
 # own error text on its way to the caller.
 _SPN = re.compile(r"(?<![./\w])[A-Za-z][A-Za-z0-9]*(?:\.[0-9]+)?/[A-Za-z0-9._-]+\b")
-_CONN = re.compile(
-    r"(?i)(Data Source|Provider|Initial Catalog|User ID|Password|Server)=[^;<\"]*"
-)
+_CONN = re.compile(r"(?i)(Data Source|Provider|Initial Catalog|User ID|Password|Server)=[^;<\"]*")
 
 
 def make_scrubber(

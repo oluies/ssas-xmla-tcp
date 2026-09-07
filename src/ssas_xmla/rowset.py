@@ -3,6 +3,7 @@
 Values stay strings: interpreting them is the caller's business, and the
 OpenMetadata connector already owns that mapping for its own purposes.
 """
+
 from __future__ import annotations
 
 import re

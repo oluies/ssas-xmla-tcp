@@ -21,6 +21,7 @@ Guarantees this surface makes (contracts/public-api.md):
 4. Read-only. No operation mutating server state exists in this package.
 5. No platform dependency. No Windows-only or .NET component, anywhere.
 """
+
 from __future__ import annotations
 
 from .auth import Credential

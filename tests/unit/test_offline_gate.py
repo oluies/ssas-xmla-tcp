@@ -3,6 +3,7 @@
 If someone later drops --disable-socket from pytest configuration, these fail and
 say why, instead of the suite quietly acquiring a network dependency.
 """
+
 import socket
 
 import pytest

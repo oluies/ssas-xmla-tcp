@@ -5,6 +5,7 @@ different operator actions: a connection failure means check the network, an
 authentication failure means check the ticket, an authorization failure means
 check permissions. Collapsing them would force callers to parse message text.
 """
+
 from __future__ import annotations
 
 

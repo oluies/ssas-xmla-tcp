@@ -1,4 +1,5 @@
 """Session lifecycle and state transitions."""
+
 import pytest
 
 from ssas_xmla import dime
@@ -11,6 +12,7 @@ from tests.fixtures import synth
 
 class DoneContext:
     """A context that completes on the first step."""
+
     protection = False
 
     def __init__(self):

@@ -7,6 +7,7 @@ file must exercise exactly those shapes; keeping them out of the source text
 means the gate stays strict everywhere else. Addresses use RFC-5737
 documentation ranges, which are networking constants rather than anybody's host.
 """
+
 from ssas_xmla.redact import make_scrubber
 
 # Assembled so the literals never appear in the committed source.

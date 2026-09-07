@@ -3,6 +3,7 @@
 Sockets are disabled by pytest configuration, not here, so that a test which
 accidentally reaches the network fails loudly rather than silently passing.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
