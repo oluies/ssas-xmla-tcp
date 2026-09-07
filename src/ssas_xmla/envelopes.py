@@ -14,10 +14,15 @@ from xml.sax.saxutils import escape
 
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 XMLA_NS = "urn:schemas-microsoft-com:xml-analysis"
+# Authenticate lives in a DIFFERENT namespace from Discover/Execute. Confirmed
+# against the worked example in [MS-SSAS] "Authentication", and confirmed the hard
+# way by a live server: sending Authenticate under the XMLA namespace is rejected
+# with "The Authenticate element ... cannot appear under Envelope/Body".
+EXT_NS = "http://schemas.microsoft.com/analysisservices/2003/ext"
 
 _AUTHENTICATE = (
     '<Envelope xmlns="{soap}"><Body>'
-    '<Authenticate xmlns="{xmla}"><SspiHandshake>{token}</SspiHandshake></Authenticate>'
+    '<Authenticate xmlns="{ext}"><SspiHandshake>{token}</SspiHandshake></Authenticate>'
     "</Body></Envelope>"
 )
 
@@ -47,7 +52,7 @@ def authenticate(token_b64: str) -> bytes:
     [MS-SSAS] Authentication and Encryption: the tokens ride inside SOAP, and the
     exchange repeats until GSS-API reports completion or error.
     """
-    return _AUTHENTICATE.format(soap=SOAP_NS, xmla=XMLA_NS, token=token_b64).encode("utf-8")
+    return _AUTHENTICATE.format(soap=SOAP_NS, ext=EXT_NS, token=token_b64).encode("utf-8")
 
 
 def discover(

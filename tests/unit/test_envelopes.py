@@ -10,9 +10,14 @@ def test_discover_envelope_has_the_specified_structure():
     assert "<Properties><PropertyList></PropertyList></Properties>" in xml
 
 
-def test_authenticate_envelope_carries_the_token():
+def test_authenticate_uses_the_ext_namespace_not_the_xmla_one():
+    """A live server rejects Authenticate under the XMLA namespace outright:
+    "The Authenticate element ... cannot appear under Envelope/Body". [MS-SSAS]
+    Authentication shows it in the analysisservices/2003/ext namespace."""
     xml = envelopes.authenticate("QUJD").decode()
-    assert f'<Authenticate xmlns="{envelopes.XMLA_NS}">' in xml
+    assert f'<Authenticate xmlns="{envelopes.EXT_NS}">' in xml
+    assert envelopes.EXT_NS != envelopes.XMLA_NS
+    assert f'<Authenticate xmlns="{envelopes.XMLA_NS}">' not in xml
     assert "<SspiHandshake>QUJD</SspiHandshake>" in xml
 
 

@@ -93,3 +93,15 @@ def test_hostname_inside_a_longer_word_is_left_alone():
     out = make_scrubber(host="sql")("the sqlserver process and sql itself")
     assert "sqlserver" in out
     assert "<HOST>" in out
+
+
+def test_urls_survive_the_spn_pattern():
+    """Without a lookbehind, "schemas.xmlsoap.org/soap" matched at "org/soap" and
+    every diagnostic URL became <SPN>, mangling server error text."""
+    url = "http://schemas.xmlsoap.org/soap/envelope/"
+    assert url in make_scrubber()(f"namespace {url} rejected")
+
+
+def test_a_real_spn_is_still_removed():
+    out = make_scrubber()("target " + SPN + " denied")
+    assert SPN not in out

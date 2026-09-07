@@ -6,6 +6,7 @@ binding, with no IIS in front of it? — and names the stage that failed if not.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .auth import Credential
@@ -41,9 +42,16 @@ def main(argv: list[str] | None = None) -> int:
     credential = Credential(
         mechanism=args.mechanism, principal=args.principal, service=args.service
     )
+    # From the environment, never argv: a password on the command line is visible
+    # in the process list to every other user on the machine.
+    password = os.environ.get("SSAS_PASSWORD") or None
     try:
         with connect(
-            args.host, args.port, credential=credential, timeout=args.timeout
+            args.host,
+            args.port,
+            credential=credential,
+            timeout=args.timeout,
+            password=password,
         ) as session:
             result = session.discover_datasources()
     except NegotiationError as exc:

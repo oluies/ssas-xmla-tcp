@@ -116,7 +116,12 @@ class Session:
     _scrub: object = field(default=None, repr=False)
 
     # -- lifecycle ------------------------------------------------------------
-    def open(self, channel: Channel | None = None, context=None) -> Session:
+    def open(
+        self,
+        channel: Channel | None = None,
+        context=None,
+        password: str | None = None,
+    ) -> Session:
         """Connect, negotiate and authenticate. A returned session is usable."""
         self._scrub = make_scrubber(
             host=self.target.host,
@@ -128,7 +133,9 @@ class Session:
             )
             self._stream = MessageStream(chan)
             self.state = State.NEGOTIATED
-            ctx = context or auth.build_context(self.credential, self.target.host)
+            ctx = context or auth.build_context(
+                self.credential, self.target.host, password
+            )
             auth.handshake(ctx, self._send_authenticate)
             self.terms.protection = bool(getattr(ctx, "protection", False))
             self.state = State.AUTHENTICATED
@@ -236,8 +243,13 @@ def connect(
     timeout: float = DEFAULT_TIMEOUT,
     channel: Channel | None = None,
     context=None,
+    password: str | None = None,
 ) -> Session:
-    """Open an authenticated session. Raises one of the categorised errors."""
+    """Open an authenticated session. Raises one of the categorised errors.
+
+    `password` is only for a standalone server, where NTLM has no ambient identity.
+    It reaches the security layer directly and is never held on the session.
+    """
     target = ConnectionTarget(host=host, port=port, timeout=timeout)
     session = Session(target=target, credential=credential or Credential())
-    return session.open(channel=channel, context=context)
+    return session.open(channel=channel, context=context, password=password)

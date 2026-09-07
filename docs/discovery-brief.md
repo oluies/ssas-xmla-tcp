@@ -131,3 +131,45 @@ derived addition.
 | Milestone shape | Spike the handshake first, then build toward a general-purpose client library |
 | Auth in scope | Kerberos and NTLM. Anonymous is not a target |
 | Instance shape | Named instance — so port resolution matters (see the gap above) |
+
+
+## Live findings, 2026-09-07 (first run against a real instance)
+
+Fixture: SQL Server 2022, two **named** instances `TAB` and `MD`, pinned to ports 2383 and
+2384 (`Port` in `msmdsrv.ini`; they were on dynamic ports 49682/49683 before). Authentication
+is NTLM with a local reader account — the box is standalone, so there is no domain and no
+Kerberos.
+
+**Settled — these are no longer UNVERIFIED:**
+
+- **DIME framing is correct.** The header this client emits is byte-identical to the worked
+  example in [MS-SSAS] "Authentication": `0E 10 00 04 00 00 00 08 ...` — VERSION 1, MB/ME set,
+  OPTIONS_LENGTH 4, TYPE_LENGTH 8.
+- **Clear-text `text/xml` is ACCEPTED.** The server parsed our payload and replied in kind,
+  with no binary-XML or compression negotiation. **D2's assumption holds and the milestone's
+  scope stands** — [MS-BINXML] and XPRESS remain out of scope. This was the project's largest
+  single risk.
+- **The GSS/SPNEGO handshake completes.** Two round trips: client token -> server challenge ->
+  client response -> `<SspiHandshake/>` empty, context reports complete. Matches the spec's
+  worked example exactly.
+
+**Corrected — the spec was right and this client was wrong:**
+
+- `Authenticate` is NOT in the XMLA namespace. It belongs to
+  `http://schemas.microsoft.com/analysisservices/2003/ext`, while Discover and Execute use
+  `urn:schemas-microsoft-com:xml-analysis`. Sending it under the XMLA namespace is rejected:
+  *"The Authenticate element ... cannot appear under Envelope/Body"*.
+
+**STILL OPEN — the remaining blocker:**
+
+- **A Discover issued after a completed handshake resets the connection.** The server accepts
+  the authentication, then drops the connection on the next message. Ruled out so far: setting
+  the `NEGO` OPTIONS bit on post-handshake messages (as the spec's third example message does),
+  and GSS-wrapping the payload with the completed context. Both still reset.
+
+  Next things to try, in order: whether the Discover needs specific `PropertyList` entries
+  after TCP auth (a `SessionId`, `LocaleIdentifier` or `DataSourceInfo`); whether a UTF-8 BOM
+  is required on the payload, as the spec's example client messages carry one (`EF BB BF`);
+  and whether the connection expects the `Authenticate` sequence to be followed by a specific
+  initialization message. Read [MS-SSAS] "Initialization" and the Discover message sections
+  before guessing further.

@@ -65,8 +65,15 @@ def extract_token(response_xml: str) -> str:
     return match.group(1).strip()
 
 
-def build_context(credential: Credential, host: str) -> SecurityContext:
-    """Create a real SPNEGO context. Imported lazily so parser tests need no pyspnego."""
+def build_context(
+    credential: Credential, host: str, password: str | None = None
+) -> SecurityContext:
+    """Create a real SPNEGO context. Imported lazily so parser tests need no pyspnego.
+
+    `password` is for the standalone (non-domain) case, where NTLM has no ambient
+    identity to draw on. It is handed straight to the security layer and is never
+    stored on Credential — that is what keeps repr() and any log line safe.
+    """
     try:
         import spnego  # ty: ignore[unresolved-import]
     except ImportError as exc:  # pragma: no cover - dependency is declared
@@ -78,6 +85,7 @@ def build_context(credential: Credential, host: str) -> SecurityContext:
     try:
         return spnego.client(
             username=credential.principal,
+            password=password,
             hostname=host,
             service=credential.service,
             protocol=protocol,
