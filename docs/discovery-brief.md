@@ -194,3 +194,27 @@ Kerberos.
   — one capture should show it outright. This is the discovery-driven approach the
   constitution requires (principle IV): record what the wire actually carries rather than
   inferring further from the specification.
+
+
+## TCP 2382 redirector — tested, still undocumented (2026-09-07)
+
+[MC-SQLR] specifies named-instance resolution over **UDP 1434** for the database engine:
+
+    request : 0x04 | InstanceName (MBCS) | 0x00        (CLNT_UCAST_INST)
+    response: 0x05 | RespSize (2 bytes)  | RespData    (semicolon-delimited, carries `tcp;`)
+
+The obvious hypothesis was that the SQL Browser speaks the same framing on **TCP 2382** for
+Analysis Services. **It does not.** Against a live browser (service running, port open at both
+firewalls, TCP connect succeeds), all of these time out with no response at all:
+
+| sent | result |
+|---|---|
+| `0x04` + `TAB` + NUL (CLNT_UCAST_INST) | no response |
+| `0x04` + `MD` + NUL | no response |
+| `0x03` (CLNT_UCAST_EX, enumerate) | no response |
+| bare instance name, no opcode | no response |
+
+So the earlier conclusion holds, now on evidence rather than on absence of a document: the
+TCP 2382 exchange is not publicly specified and is not MC-SQLR over TCP. **D4 stands** — pin
+the instance port in `msmdsrv.ini` and address it directly. A firewall rule is needed either
+way, so this costs the operator nothing.
