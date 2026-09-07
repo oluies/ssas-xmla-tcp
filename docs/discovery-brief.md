@@ -287,3 +287,30 @@ before trying more byte layouts.
 Both captures were deleted from the server and locally after analysis. They contain real
 `SspiHandshake` tokens carrying the principal, realm and machine name, and MUST NOT be
 committed (D6).
+
+
+### Confidentiality flags — tested, and the hypothesis was wrong
+
+The previous entry called missing NTLM confidentiality flags "the most promising untested
+lead". It was wrong, and cheaply so: `spnego.client`'s default `context_req` is **62**, which
+decomposes to `mutual_auth | replay_detect | sequence_detect | confidentiality | integrity`.
+Confidentiality was requested all along.
+
+Also tested, all reset: `NegotiateOptions.wrapping_winrm` with header+signature+data,
+`wrapping_winrm` with `wrap()`, default options with `wrap()`, and `wrap()` with no header.
+
+That is nine distinct sealed-message attempts now. The consistent reset with no server-side
+log entry says the server discards the message before it reaches anything that reports errors.
+
+**What is still unexplained** is the 3 bytes at offsets 4-6, between the constant `03 00 10 00`
+header and the NTLM signature at offset 7. They vary between captures, so they are not a
+constant, and 3 bytes is not a natural width for a length or a flag field — which suggests the
+whole layout is being read wrongly rather than that one field is missing.
+
+**Do not try a tenth framing.** The next step that would actually settle it is to decrypt a
+captured sealed message: capture a real session AND its NTLM session key (pyspnego can expose
+`session_key` on a context we control, so run our own authenticated session, capture our own
+sealed bytes, and compare against a real client's for the same request). If our ciphertext
+differs structurally from theirs for identical plaintext, the problem is sealing; if it
+matches, the problem is framing. That distinction is what nine guesses have failed to
+establish, and one experiment would.
