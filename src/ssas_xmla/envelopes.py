@@ -26,8 +26,15 @@ _AUTHENTICATE = (
     "</Body></Envelope>"
 )
 
+# [MS-SSAS] "Initialization for Non-HTTP Transport": to begin the session the client
+# adds a BeginSession SOAP header, and the server returns a SessionId that every
+# later request MUST carry. Required by the specification; confirmed NOT sufficient
+# on its own to get a post-handshake Discover accepted (see docs/discovery-brief.md).
+_BEGIN_SESSION = '<Header><BeginSession xmlns="{xmla}" mustUnderstand="1"/></Header>'
+_SESSION = '<Header><Session xmlns="{xmla}" mustUnderstand="1" SessionId="{sid}"/></Header>'
+
 _DISCOVER = (
-    '<Envelope xmlns="{soap}"><Body><Discover xmlns="{xmla}">'
+    '<Envelope xmlns="{soap}">{header}<Body><Discover xmlns="{xmla}">'
     "<RequestType>{rtype}</RequestType>"
     "<Restrictions><RestrictionList>{restr}</RestrictionList></Restrictions>"
     "<Properties><PropertyList>{props}</PropertyList></Properties>"
@@ -35,7 +42,7 @@ _DISCOVER = (
 )
 
 _EXECUTE = (
-    '<Envelope xmlns="{soap}"><Body><Execute xmlns="{xmla}">'
+    '<Envelope xmlns="{soap}">{header}<Body><Execute xmlns="{xmla}">'
     "<Command><Statement>{stmt}</Statement></Command>"
     "<Properties><PropertyList>{props}</PropertyList></Properties>"
     "</Execute></Body></Envelope>"
@@ -55,24 +62,36 @@ def authenticate(token_b64: str) -> bytes:
     return _AUTHENTICATE.format(soap=SOAP_NS, ext=EXT_NS, token=token_b64).encode("utf-8")
 
 
+def session_header(session_id: str | None) -> str:
+    """BeginSession on the first request, Session with the id on every later one."""
+    if session_id:
+        return _SESSION.format(xmla=XMLA_NS, sid=escape(session_id))
+    return _BEGIN_SESSION.format(xmla=XMLA_NS)
+
+
 def discover(
     request_type: str,
     restrictions: str = "",
     catalog: str | None = None,
+    session_id: str | None = None,
 ) -> bytes:
     return _DISCOVER.format(
         soap=SOAP_NS,
         xmla=XMLA_NS,
+        header=session_header(session_id),
         rtype=escape(request_type),
         restr=restrictions,
         props=_properties(catalog),
     ).encode("utf-8")
 
 
-def execute(statement: str, catalog: str | None = None) -> bytes:
+def execute(
+    statement: str, catalog: str | None = None, session_id: str | None = None
+) -> bytes:
     return _EXECUTE.format(
         soap=SOAP_NS,
         xmla=XMLA_NS,
+        header=session_header(session_id),
         stmt=escape(statement),
         props=_properties(catalog),
     ).encode("utf-8")

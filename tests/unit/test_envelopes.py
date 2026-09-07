@@ -37,3 +37,21 @@ def test_no_builder_exists_for_a_mutating_command():
     surface = {n for n in dir(envelopes) if not n.startswith("_")}
     for forbidden in ("create", "alter", "delete", "refresh", "process", "tmsl"):
         assert not any(forbidden in n.lower() for n in surface), forbidden
+
+
+def test_first_request_carries_begin_session():
+    """[MS-SSAS] Initialization for Non-HTTP Transport requires it."""
+    xml = envelopes.discover("DISCOVER_DATASOURCES").decode()
+    assert "<Header>" in xml
+    assert f'<BeginSession xmlns="{envelopes.XMLA_NS}" mustUnderstand="1"/>' in xml
+
+
+def test_later_requests_carry_the_session_id():
+    xml = envelopes.discover("DBSCHEMA_CATALOGS", session_id="ABC-123").decode()
+    assert 'SessionId="ABC-123"' in xml
+    assert "BeginSession" not in xml
+
+
+def test_execute_carries_the_session_header_too():
+    xml = envelopes.execute("EVALUATE X", session_id="S1").decode()
+    assert 'SessionId="S1"' in xml

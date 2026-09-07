@@ -167,9 +167,30 @@ Kerberos.
   the `NEGO` OPTIONS bit on post-handshake messages (as the spec's third example message does),
   and GSS-wrapping the payload with the completed context. Both still reset.
 
-  Next things to try, in order: whether the Discover needs specific `PropertyList` entries
-  after TCP auth (a `SessionId`, `LocaleIdentifier` or `DataSourceInfo`); whether a UTF-8 BOM
-  is required on the payload, as the spec's example client messages carry one (`EF BB BF`);
-  and whether the connection expects the `Authenticate` sequence to be followed by a specific
-  initialization message. Read [MS-SSAS] "Initialization" and the Discover message sections
-  before guessing further.
+  **Ruled out by experiment** (each on a fresh connection, all reset identically):
+
+  | variant | result |
+  |---|---|
+  | `BeginSession` SOAP header, per [MS-SSAS] "Initialization for Non-HTTP Transport" | reset |
+  | UTF-8 BOM prefix, as the spec's example client messages carry (`EF BB BF`) | reset |
+  | `NEGO` OPTIONS bit set on the post-handshake message | reset |
+  | `NEGO` clear | reset |
+  | payload GSS-wrapped with the completed context | reset |
+  | no SOAP header at all | reset |
+
+  The `BeginSession` header IS required by the specification and is now known-correct
+  structure, so it should stay in the implementation regardless — it simply is not
+  sufficient on its own.
+
+  **What the server says: nothing.** `msmdsrv.log` records the service starting and
+  listening on the pinned port, but logs no entry whatsoever for these connections. The
+  reset therefore happens below the level SSAS logs, which argues against a permissions or
+  XML-validity problem and for a framing/transport-state mismatch after the handshake.
+
+  **Recommended next step, and it is not more guessing:** run a real client against the
+  instance *on the box itself* (SSMS, or ADOMD.NET over `localhost:2383`) with a packet
+  capture, then diff its post-handshake bytes against ours. Every layer up to and including
+  authentication is now confirmed working, so the divergence is in a small, bounded window
+  — one capture should show it outright. This is the discovery-driven approach the
+  constitution requires (principle IV): record what the wire actually carries rather than
+  inferring further from the specification.
