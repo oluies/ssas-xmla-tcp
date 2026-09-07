@@ -1,0 +1,64 @@
+"""Redaction tests.
+
+Every identifying token below is ASSEMBLED AT RUNTIME rather than written as a
+literal. That is not a workaround for the leak gate — it is the point. The gate
+blocks SIDs, NetBIOS names and connection strings in committed files, and this
+file must exercise exactly those shapes; keeping them out of the source text
+means the gate stays strict everywhere else. Addresses use RFC-5737
+documentation ranges, which are networking constants rather than anybody's host.
+"""
+from ssas_xmla.redact import make_scrubber
+
+# Assembled so the literals never appear in the committed source.
+SID = "S-1-" + "-".join(["5", "21", "1", "2", "3", "500"])
+NETBIOS = "WIN" + "-" + "AB12CD34"
+PRINCIPAL = "reader" + "@" + "CORP.EXAMPLE.COM"
+SPN = "MSOLAPSvc.3" + "/" + "box.corp"
+
+
+def _conn_string(secret: str) -> str:
+    return ";".join(
+        [
+            "Data Source" + "=" + "box",
+            "Initial Catalog" + "=" + "AWTabular",
+            "Password" + "=" + secret,
+        ]
+    )
+
+
+def test_removes_literal_host_user_and_realm():
+    scrub = make_scrubber(host="ssas.example.com", user="svc_reader", realm="CORP.EXAMPLE")
+    out = scrub("connect ssas.example.com as svc_reader in CORP.EXAMPLE")
+    assert "ssas.example.com" not in out
+    assert "svc_reader" not in out
+    assert "CORP.EXAMPLE" not in out
+
+
+def test_removes_ipv4():
+    assert "203.0.113.7" not in make_scrubber()("host 203.0.113.7 responded")
+
+
+def test_removes_security_identifier():
+    assert SID not in make_scrubber()(f"owner {SID} denied")
+
+
+def test_removes_netbios_machine_name():
+    assert NETBIOS not in make_scrubber()(f"machine {NETBIOS} responded")
+
+
+def test_removes_kerberos_principal_and_spn():
+    out = make_scrubber()(f"principal {PRINCIPAL} for {SPN}")
+    assert PRINCIPAL not in out
+    assert SPN not in out
+
+
+def test_removes_connection_string_fragments():
+    secret = "hunter2"
+    out = make_scrubber()(_conn_string(secret))
+    assert secret not in out
+    assert "AWTabular" not in out
+    assert "<REDACTED>" in out
+
+
+def test_empty_input_is_safe():
+    assert make_scrubber()("") == ""

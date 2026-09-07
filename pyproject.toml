@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ssas-xmla-tcp"
+dynamic = ["version"]
+description = "Pure-Python client for the SQL Server Analysis Services native XMLA/TCP binding ([MS-SSAS])"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Örjan Lundberg" }]
+# One runtime dependency, deliberately. A protocol library that drags in a platform
+# SDK is not reusable by the audience it exists for (constitution, Security section).
+dependencies = [
+  "pyspnego>=0.10",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-socket>=0.7",
+  "ruff>=0.6",
+]
+
+[tool.hatch.version]
+path = "src/ssas_xmla/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ssas_xmla"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Sockets disabled by default: constitution III is NON-NEGOTIABLE. A unit run must
+# pass on a machine that has never contacted an Analysis Services instance.
+addopts = "-q --disable-socket --allow-unix-socket"
+pythonpath = ["src"]
+markers = [
+  "integration: needs a live server; excluded from the default offline run",
+]
