@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "001-ssas-xmla-tcp"]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uvx ruff@latest check .
-      - run: uvx ruff@latest format --check .
+      - run: uvx ruff@0.6.9 check .
+      - run: uvx ruff@0.6.9 format --check .
 
   test-offline:
     name: offline suite (py ${{ matrix.python-version }})
@@ -39,8 +39,7 @@ jobs:
       - name: pytest (sockets disabled)
         run: >
           uv run --no-project --python ${{ matrix.python-version }}
-          --with pytest --with pytest-socket --with pyspnego
-          --with-editable .
+          --with-editable ".[dev]"
           pytest
 
   dependency-surface:
@@ -49,8 +48,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      # A protocol library that drags in a platform SDK is not reusable by the
-      # audience it exists for. This job fails if anything else creeps in.
+      # Asserts the DECLARED dependency set, not just that an install succeeds.
+      # The previous version ran `uv run --with pyspnego --with-editable .`, which
+      # resolves whatever [project.dependencies] declares -- so adding a platform
+      # SDK would have installed it and the job would still have gone green.
+      - name: assert [project.dependencies] is exactly pyspnego
+        run: |
+          python3 - <<'EOF'
+          import tomllib
+          deps = tomllib.load(open("pyproject.toml","rb"))["project"]["dependencies"]
+          names = sorted(d.split(">=")[0].split("==")[0].split("[")[0].strip() for d in deps)
+          print("declared runtime dependencies:", names)
+          assert names == ["pyspnego"], f"unexpected runtime dependency: {names}"
+          EOF
       - name: import with nothing but pyspnego installed
         run: >
           uv run --no-project --python 3.12 --with pyspnego --with-editable .
@@ -65,9 +75,13 @@ jobs:
           fetch-depth: 0
       # The same gate the pre-commit hook runs, applied to every tracked file so a
       # bypassed hook or a rebase cannot let a host, IP, SID or token through.
+      # Runs the hook itself, not a sed-rewritten copy: a rewrite that stops
+      # matching yields a gate that scans nothing and exits 0.
       - name: leak gate over all tracked files
-        run: |
-          sed 's#git diff --cached --name-only --diff-filter=ACM#git ls-files#' \
-            .githooks/pre-commit > /tmp/gate.sh
-          chmod +x /tmp/gate.sh
-          /tmp/gate.sh
+        env:
+          LEAK_GATE_FILES_CMD: git ls-files
+        run: .githooks/pre-commit
+      # The gate's boundary is pinned in the tree, both directions: an image tag
+      # must pass, a file path carrying a real address must not.
+      - name: leak gate boundary cases
+        run: ./tests/hooks/test_leak_gate.sh

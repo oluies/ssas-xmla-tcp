@@ -13,7 +13,7 @@ from typing import Protocol
 
 from . import dime
 from .errors import ConnectionError as SsasConnectionError
-from .errors import ProtocolError
+from .errors import IncompleteMessage
 
 
 class Channel(Protocol):
@@ -126,11 +126,11 @@ class MessageStream:
             payload, content_type, options, next_offset = dime.decode_message_at(
                 bytes(self._buf), 0
             )
-        except ProtocolError as exc:
-            # A truncated record just means "not yet"; a bad version is fatal.
-            if "truncated" in str(exc):
-                return None
-            raise
+        except IncompleteMessage:
+            # Not enough bytes yet. Every other ProtocolError is malformed input
+            # and propagates -- discriminating on message text got this wrong for
+            # chunked messages split at a record boundary.
+            return None
         return payload, content_type, options, next_offset
 
     def close(self) -> None:

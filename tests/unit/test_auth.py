@@ -113,3 +113,27 @@ def test_credential_has_no_password_field():
     cred = auth.Credential(mechanism="ntlm", principal="svc")
     assert not any("pass" in f.lower() for f in cred.__dataclass_fields__)
     assert "pass" not in repr(cred).lower()
+
+
+def test_fault_on_the_terminal_authenticate_round_is_not_dropped():
+    """For NTLM the client context completes as it emits its last token, so the
+    handshake returns without inspecting the reply. A "Logon failure" there was
+    silently dropped and the session reached AUTHENTICATED regardless."""
+    import pytest
+
+    from ssas_xmla import dime
+    from ssas_xmla.client import connect
+    from ssas_xmla.errors import AuthenticationError
+    from ssas_xmla.transport import BytesChannel
+    from tests.unit.test_client_session import DoneContext
+
+    fault = (
+        '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body><Fault>'
+        "<faultcode>XMLAnalysisError.0xC1000001</faultcode>"
+        "<faultstring>Logon failure: unknown user name or bad password.</faultstring>"
+        "</Fault></Body></Envelope>"
+    )
+    ch = BytesChannel(synth.dime_message(fault.encode()))
+    with pytest.raises(AuthenticationError, match="refused"):
+        connect("h", 2383, channel=ch, context=DoneContext())
+    del dime

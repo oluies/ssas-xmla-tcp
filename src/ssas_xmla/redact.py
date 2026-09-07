@@ -20,11 +20,14 @@ _PRINCIPAL = re.compile(r"\b[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 # The lookbehind keeps drive-letter paths (C:\Windows) out of it; a Windows path
 # being scrubbed anyway is an acceptable trade against leaking an account name.
 _NT_ACCOUNT = re.compile(r"(?<![A-Za-z]:)\b[A-Za-z][A-Za-z0-9._-]+\\[A-Za-z0-9._-]+")
-# SPNs look like MSOLAPSvc.3/host.domain or HTTP/host. The lookbehind stops this
-# swallowing URL path segments: without it "schemas.xmlsoap.org/soap" matched at
-# "org/soap" and turned every diagnostic URL into "<SPN>", mangling the server's
-# own error text on its way to the caller.
-_SPN = re.compile(r"(?<![./\w])[A-Za-z][A-Za-z0-9]*(?:\.[0-9]+)?/[A-Za-z0-9._-]+\b")
+# SPNs are anchored to the service classes actually in play, NOT to a generic
+# word/word shape. A generic pattern destroyed the diagnostics this scrubber
+# exists to preserve: "cannot appear under Envelope/Body" (the error that
+# identified the Authenticate namespace bug), "text/xml" (the content type this
+# client negotiates), "TCP/IP" and "and/or" all became "<SPN>".
+_SPN = re.compile(
+    r"\b(?:HTTP|HOST|MSSQLSvc|MSOLAPSvc(?:\.[0-9]+)?|ldap|cifs)/[A-Za-z0-9._-]+",
+)
 _CONN = re.compile(r"(?i)(Data Source|Provider|Initial Catalog|User ID|Password|Server)=[^;<\"]*")
 
 

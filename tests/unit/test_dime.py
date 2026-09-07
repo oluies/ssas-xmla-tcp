@@ -69,3 +69,16 @@ def test_truncated_body_is_rejected():
     encoded = dime.encode_message(b"payload")
     with pytest.raises(ProtocolError, match="truncated"):
         dime.decode_message(encoded[:-8])
+
+
+def test_record_missing_its_padding_is_incomplete_not_decoded():
+    """Regression: only the declared bytes were checked, not their padding, so a
+    31-of-32-byte buffer decoded as complete. The pad byte stayed in the stream and
+    was read as the next message's header — a desync surfacing as a bogus
+    "unsupported DIME version"."""
+    from ssas_xmla.errors import IncompleteMessage
+
+    encoded = dime.encode_message(b"payload")
+    assert len(encoded) % 4 == 0
+    with pytest.raises(IncompleteMessage):
+        dime.decode_message(encoded[:-1])

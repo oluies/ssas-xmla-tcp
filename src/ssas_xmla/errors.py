@@ -50,3 +50,13 @@ class NegotiationError(SsasError):
 
 class ProtocolError(SsasError):
     """The bytes on the wire did not match what the specification requires."""
+
+
+class IncompleteMessage(ProtocolError):
+    """Not enough bytes yet — read more and retry.
+
+    A distinct type rather than a flag on ProtocolError because the reader has to
+    tell "keep reading" from "this is malformed", and doing that by matching on
+    message text is fragile: a chunked message split at a record boundary is
+    incomplete but says nothing about truncation, so it was being treated as fatal.
+    """

@@ -7,6 +7,8 @@ message text.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -23,6 +25,8 @@ from .transport import Channel, MessageStream, SocketChannel
 
 DEFAULT_TIMEOUT = 30.0
 
+_SESSION_ID = re.compile(r'SessionId="([^"]+)"')
+
 # Fault codes/messages that mean "you are known but not permitted", as opposed to
 # "the request was bad". Keeps AuthorizationError distinct from ServerError.
 _DENIED_MARKERS = (
@@ -34,17 +38,18 @@ _DENIED_MARKERS = (
 
 
 def _catalog_kind(row: dict) -> str:
-    """Infer the model kind from a DBSCHEMA_CATALOGS row.
+    """Report the model kind only when the server states it.
 
-    Tabular models report a compatibility level; multidimensional ones do not.
-    Where neither signal is present the answer is "unknown" rather than a guess.
+    COMPATIBILITY_LEVEL does NOT distinguish the two: multidimensional databases
+    use 1050/1100/1103, so any MD database created on SQL Server 2012 or later
+    reports 1100+ and a ">= 1100 means tabular" rule labels it tabular. That is
+    exactly the confident-and-wrong answer this function was written to avoid, so
+    the level is not consulted at all.
+
+    Determining the kind reliably needs a probe -- DISCOVER_CSDL_METADATA succeeds
+    for tabular and faults for multidimensional -- which is a request, not a field,
+    and so belongs to the caller rather than to row parsing.
     """
-    level = row.get("COMPATIBILITY_LEVEL") or row.get("CompatibilityLevel")
-    if level:
-        try:
-            return "tabular" if int(level) >= 1100 else "multidimensional"
-        except ValueError:
-            return "unknown"
     kind = (row.get("CATALOG_TYPE") or "").strip().lower()
     if kind in ("tabular", "multidimensional"):
         return kind
@@ -115,6 +120,7 @@ class Session:
     state: State = State.UNCONNECTED
     _stream: MessageStream | None = field(default=None, repr=False)
     _scrub: object = field(default=None, repr=False)
+    _session_id: str | None = field(default=None, repr=False)
 
     # -- lifecycle ------------------------------------------------------------
     def open(
@@ -156,11 +162,16 @@ class Session:
 
     # -- requests -------------------------------------------------------------
     def discover(
-        self, request_type: str, restrictions: str = "", catalog: str | None = None
+        self,
+        request_type: str,
+        restrictions: Mapping[str, str] | None = None,
+        catalog: str | None = None,
     ) -> Rowset:
         """Issue a metadata request and return its rows."""
         self._require_authenticated()
-        payload = envelopes.discover(request_type, restrictions, catalog)
+        payload = envelopes.discover(
+            request_type, restrictions, catalog, session_id=self._session_id
+        )
         return self._roundtrip_rowset(payload)
 
     def discover_datasources(self) -> Rowset:
@@ -200,7 +211,9 @@ class Session:
         so no argument here can reach one.
         """
         self._require_authenticated()
-        return self._roundtrip_rowset(envelopes.execute(statement, catalog))
+        return self._roundtrip_rowset(
+            envelopes.execute(statement, catalog, session_id=self._session_id)
+        )
 
     # -- internals ------------------------------------------------------------
     def _require_authenticated(self) -> None:
@@ -210,16 +223,38 @@ class Session:
     def _send_authenticate(self, token_b64: str) -> str:
         assert self._stream is not None
         self._stream.send_message(envelopes.authenticate(token_b64))
-        return self._stream.receive_message().decode("utf-8", errors="replace")
+        text = self._stream.receive_message().decode("utf-8", errors="replace")
+        # Every authenticate response is fault-checked, including the terminal one.
+        # For NTLM the client context completes the moment it emits its last token,
+        # so the handshake loop returns without looking at the reply -- a "Logon
+        # failure" there would otherwise be dropped, the session would reach
+        # AUTHENTICATED, and the error would resurface mis-attributed to whatever
+        # request ran next.
+        self._raise_for_fault(text, during_authentication=True)
+        return text
 
     def _roundtrip_rowset(self, payload: bytes) -> Rowset:
         assert self._stream is not None
         self._stream.send_message(payload)
         text = self._stream.receive_message().decode("utf-8", errors="replace")
+        self._capture_session_id(text)
         self._raise_for_fault(text)
         return rowset.parse(text)
 
-    def _raise_for_fault(self, text: str) -> None:
+    def _capture_session_id(self, text: str) -> None:
+        """Remember the SessionId the server hands back to BeginSession.
+
+        [MS-SSAS] "Initialization for Non-HTTP Transport": every request after the
+        first MUST carry it. Without this the client re-sent BeginSession forever
+        and opened a new server-side session per request.
+        """
+        if self._session_id is not None:
+            return
+        found = _SESSION_ID.search(text)
+        if found:
+            self._session_id = found.group(1)
+
+    def _raise_for_fault(self, text: str, during_authentication: bool = False) -> None:
         code, message = rowset.find_fault(text)
         if code is None and message is None:
             return
@@ -228,6 +263,11 @@ class Session:
         lowered = (message or "").lower()
         if any(marker in lowered for marker in _DENIED_MARKERS):
             raise AuthorizationError("the account was refused access", detail)
+        if during_authentication:
+            # A fault during the handshake is an identity problem, not a bad
+            # request -- keeping it in the right FR-007 category is the whole
+            # point of having separate categories.
+            raise AuthenticationError("authentication was refused", detail)
         raise ServerError("the server rejected the request", detail)
 
 

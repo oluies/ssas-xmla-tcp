@@ -106,3 +106,24 @@ def test_urls_survive_the_spn_pattern():
 def test_a_real_spn_is_still_removed():
     out = make_scrubber()("target " + SPN + " denied")
     assert SPN not in out
+
+
+def test_ordinary_slashed_text_is_not_mistaken_for_an_spn():
+    """Regression: a generic word/word pattern destroyed the very diagnostics this
+    scrubber exists to preserve — including the Envelope/Body error that identified
+    the Authenticate namespace bug, and the content type this client negotiates."""
+    scrub = make_scrubber()
+    for text in (
+        "cannot appear under Envelope/Body",
+        "content type text/xml",
+        "TCP/IP",
+        "and/or",
+        "http://my-server/soap",
+    ):
+        assert scrub(text) == text, text
+
+
+def test_real_service_principal_names_are_still_removed():
+    scrub = make_scrubber()
+    for spn in ("MSOLAPSvc.3/box.corp", "HTTP/web01", "MSSQLSvc/db.corp"):
+        assert spn not in scrub(f"target {spn} denied")

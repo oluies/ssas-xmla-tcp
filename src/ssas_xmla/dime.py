@@ -29,7 +29,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-from .errors import NegotiationError, ProtocolError
+from .errors import IncompleteMessage, NegotiationError, ProtocolError
 
 VERSION = 1
 HEADER_LEN = 12
@@ -95,7 +95,7 @@ class Record:
 def decode_record(buf: bytes, offset: int = 0) -> tuple[Record, int]:
     """Decode one record starting at `offset`; return it and the next offset."""
     if len(buf) - offset < HEADER_LEN:
-        raise ProtocolError("truncated DIME header")
+        raise IncompleteMessage("truncated DIME header")
     flags, type_byte, opt_len, id_len, type_len, data_len = struct.unpack_from(
         ">BBHHHI", buf, offset
     )
@@ -108,9 +108,15 @@ def decode_record(buf: bytes, offset: int = 0) -> tuple[Record, int]:
     for length in (opt_len, id_len, type_len, data_len):
         end = pos + length
         if end > len(buf):
-            raise ProtocolError("truncated DIME record body")
+            raise IncompleteMessage("truncated DIME record body")
         fields.append(buf[pos:end])
         pos = end + _pad(length)
+    if pos > len(buf):
+        # The declared bytes arrived but their padding has not. Reporting the
+        # record as decoded leaves the pad bytes in the stream, where they are
+        # read as the next message's header and surface as a bogus
+        # "unsupported DIME version" -- a desync disguised as a protocol error.
+        raise IncompleteMessage("truncated DIME record padding")
     options, id_, type_, data = fields
     record = Record(
         data=data,
@@ -157,7 +163,9 @@ def decode_message_at(buf: bytes, offset: int = 0) -> tuple[bytes, bytes, bytes,
         if record.me:
             break
         if offset >= len(buf):
-            raise ProtocolError("DIME message ended without a record setting ME")
+            # Incomplete, not malformed: a chunked message split at a record
+            # boundary looks exactly like this and just needs more bytes.
+            raise IncompleteMessage("DIME message ended without a record setting ME")
     return b"".join(chunks), content_type, options, offset
 
 

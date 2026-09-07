@@ -51,3 +51,23 @@ def test_close_propagates_to_the_channel():
     channel = BytesChannel()
     MessageStream(channel).close()
     assert channel.closed
+
+
+def test_chunked_message_split_at_a_record_boundary_is_not_fatal():
+    """Regression: incompleteness was detected by substring-matching "truncated",
+    so a chunked message whose records land on a TCP segment boundary raised
+    ProtocolError("...without a record setting ME") instead of reading more."""
+    full = synth.chunked_dime_message([b"a" * 8, b"b" * 8])
+
+    class SplitAtRecordBoundary(BytesChannel):
+        def __init__(self, data, cut):
+            super().__init__(data)
+            self._cut = cut
+            self._calls = 0
+
+        def recv(self, size):
+            self._calls += 1
+            return super().recv(self._cut if self._calls == 1 else 65536)
+
+    stream = MessageStream(SplitAtRecordBoundary(full, 32))
+    assert stream.receive_message() == b"a" * 8 + b"b" * 8

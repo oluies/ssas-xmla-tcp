@@ -11,7 +11,14 @@ one. The capability is absent, not gated.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from xml.sax.saxutils import escape
+
+# Restriction names are XMLA rowset column names -- letters, digits, underscore.
+# Validated rather than escaped, because an element NAME cannot be made safe by
+# escaping: it has to be rejected.
+_RESTRICTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 XMLA_NS = "urn:schemas-microsoft-com:xml-analysis"
@@ -54,6 +61,24 @@ def _properties(catalog: str | None) -> str:
     return f"<Catalog>{escape(catalog)}</Catalog>" if catalog else ""
 
 
+def _restrictions(restrictions: Mapping[str, str] | None) -> str:
+    """Build a RestrictionList from a mapping, escaping every value.
+
+    Takes a mapping rather than raw XML deliberately. `restrictions` was the one
+    parameter on the public surface through which caller text reached the wire
+    unfiltered, so a value containing `<` or `&` produced a malformed envelope,
+    and a crafted one could close RestrictionList and inject sibling elements.
+    """
+    if not restrictions:
+        return ""
+    parts = []
+    for name, value in restrictions.items():
+        if not _RESTRICTION_NAME.match(name):
+            raise ValueError(f"invalid restriction name: {name!r}")
+        parts.append(f"<{name}>{escape(str(value))}</{name}>")
+    return "".join(parts)
+
+
 def authenticate(token_b64: str) -> bytes:
     """Carry one GSS-API security token to the server.
 
@@ -72,7 +97,7 @@ def session_header(session_id: str | None) -> str:
 
 def discover(
     request_type: str,
-    restrictions: str = "",
+    restrictions: Mapping[str, str] | None = None,
     catalog: str | None = None,
     session_id: str | None = None,
 ) -> bytes:
@@ -81,7 +106,7 @@ def discover(
         xmla=XMLA_NS,
         header=session_header(session_id),
         rtype=escape(request_type),
-        restr=restrictions,
+        restr=_restrictions(restrictions),
         props=_properties(catalog),
     ).encode("utf-8")
 

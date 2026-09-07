@@ -7,3 +7,5 @@ dist/
 *.egg-info/
 .venv/
 *.egg-info/
+# roborev snapshots
+/.roborev/

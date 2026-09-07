@@ -114,3 +114,30 @@ def test_the_request_sent_is_a_valid_dime_message():
     payload, content_type = dime.decode_message(bytes(ch.sent))
     assert content_type == dime.TYPE_TEXT_XML
     assert b"Authenticate" in payload
+
+
+def test_password_reaches_the_security_layer_and_is_not_retained():
+    """The standalone-NTLM password path had no coverage: dropping the argument
+    anywhere in connect -> open -> build_context would only fail against a live
+    server."""
+    seen = {}
+
+    def fake_build_context(credential, host, password=None):
+        seen["password"] = password
+        return DoneContext()
+
+    import ssas_xmla.auth as auth_mod
+    from ssas_xmla import client as client_mod
+
+    original = auth_mod.build_context
+    client_mod.auth.build_context = fake_build_context
+    try:
+        ch = _channel_for(synth.AUTHENTICATE_RESPONSE.format(token=""))
+        s = connect("h", 2383, channel=ch, password="s3cret")
+    finally:
+        client_mod.auth.build_context = original
+
+    assert seen["password"] == "s3cret"
+    # never stored on the session or its credential, so no repr or log can leak it
+    assert "s3cret" not in repr(s)
+    assert "s3cret" not in repr(s.credential)

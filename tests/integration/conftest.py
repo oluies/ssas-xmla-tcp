@@ -17,6 +17,18 @@ import os
 import pytest
 
 
+def pytest_collection_modifyitems(items):
+    """Let integration tests use the network.
+
+    `addopts` disables sockets for the WHOLE run, not just the unit suite, so
+    without this every integration test errors with SocketBlockedError the moment
+    SSAS_HOST is set -- they were unrunnable as written.
+    """
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(pytest.mark.enable_socket)
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
