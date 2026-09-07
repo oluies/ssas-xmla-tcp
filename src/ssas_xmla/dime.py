@@ -129,16 +129,20 @@ def encode_message(payload: bytes, type_: bytes = TYPE_TEXT_XML) -> bytes:
     return Record(data=payload, type_=type_).encode()
 
 
-def decode_message(buf: bytes) -> tuple[bytes, bytes]:
-    """Reassemble one DIME message from `buf`; return (payload, content type).
+def decode_message_at(buf: bytes, offset: int = 0) -> tuple[bytes, bytes, bytes, int]:
+    """Reassemble one DIME message starting at `offset`.
+
+    Returns (payload, content type, first record's OPTIONS, next offset). The next
+    offset matters: a peer may pack several messages into one TCP segment, so the
+    caller must keep the remainder rather than discarding the read buffer.
 
     A chunked sequence "is required to be encapsulated entirely within one DIME
     message and cannot span across multiple DIME messages", so reassembly stops at
     the record whose ME bit is set.
     """
     chunks: list[bytes] = []
-    offset = 0
     content_type = b""
+    options = b""
     first = True
     while True:
         record, offset = decode_record(buf, offset)
@@ -146,13 +150,20 @@ def decode_message(buf: bytes) -> tuple[bytes, bytes]:
             if not record.mb:
                 raise ProtocolError("first DIME record does not set MB")
             content_type = record.type_
+            options = record.options
             first = False
         chunks.append(record.data)
         if record.me:
             break
         if offset >= len(buf):
             raise ProtocolError("DIME message ended without a record setting ME")
-    return b"".join(chunks), content_type
+    return b"".join(chunks), content_type, options, offset
+
+
+def decode_message(buf: bytes) -> tuple[bytes, bytes]:
+    """Decode the first message in `buf`; return (payload, content type)."""
+    payload, content_type, _options, _next = decode_message_at(buf, 0)
+    return payload, content_type
 
 
 def check_negotiated(record_options: bytes, record_type: bytes) -> None:

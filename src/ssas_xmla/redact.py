@@ -15,6 +15,10 @@ _SID = re.compile(r"\bS-1-(?:\d+-)+\d+\b")
 _NETBIOS = re.compile(r"\bWIN-[A-Z0-9]{6,}\b")
 # Kerberos principals and SPNs: user@REALM, HTTP/host.domain, MSOLAPSvc.3/host
 _PRINCIPAL = re.compile(r"\b[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# NT-style DOMAIN\user, which SSAS faults use ("Either the user, DOMAIN\reader, ...").
+# The lookbehind keeps drive-letter paths (C:\Windows) out of it; a Windows path
+# being scrubbed anyway is an acceptable trade against leaking an account name.
+_NT_ACCOUNT = re.compile(r"(?<![A-Za-z]:)\b[A-Za-z][A-Za-z0-9._-]+\\[A-Za-z0-9._-]+")
 _SPN = re.compile(r"\b[A-Za-z0-9]+(?:\.[0-9]+)?/[A-Za-z0-9._-]+\b")
 _CONN = re.compile(
     r"(?i)(Data Source|Provider|Initial Catalog|User ID|Password|Server)=[^;<\"]*"
@@ -47,6 +51,7 @@ def make_scrubber(
         text = _CONN.sub(r"\1=<REDACTED>", text)
         text = _SID.sub("<SID>", text)
         text = _NETBIOS.sub("<HOST>", text)
+        text = _NT_ACCOUNT.sub("<PRINCIPAL>", text)
         text = _PRINCIPAL.sub("<PRINCIPAL>", text)
         text = _SPN.sub("<SPN>", text)
         text = _IPV4.sub("<IP>", text)

@@ -14,6 +14,7 @@ SID = "S-1-" + "-".join(["5", "21", "1", "2", "3", "500"])
 NETBIOS = "WIN" + "-" + "AB12CD34"
 PRINCIPAL = "reader" + "@" + "CORP.EXAMPLE.COM"
 SPN = "MSOLAPSvc.3" + "/" + "box.corp"
+NT_ACCOUNT = "CORPDOM" + chr(92) + "reader"
 
 
 def _conn_string(secret: str) -> str:
@@ -62,3 +63,15 @@ def test_removes_connection_string_fragments():
 
 def test_empty_input_is_safe():
     assert make_scrubber()("") == ""
+
+
+def test_removes_nt_style_domain_account():
+    """SSAS faults name the account as DOMAIN\\user, not user@REALM."""
+    out = make_scrubber()(f"Either the user, {NT_ACCOUNT}, does not have access")
+    assert NT_ACCOUNT not in out
+    assert "reader" not in out
+
+
+def test_drive_letter_paths_survive():
+    out = make_scrubber()("see C:" + chr(92) + "Windows for details")
+    assert "Windows" in out

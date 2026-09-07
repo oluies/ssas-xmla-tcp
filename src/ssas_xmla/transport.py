@@ -84,10 +84,16 @@ class BytesChannel:
 
 
 class MessageStream:
-    """Sends and receives whole DIME messages over a Channel."""
+    """Sends and receives whole DIME messages over a Channel.
+
+    Holds a read buffer between calls. A peer may pack several messages into one
+    TCP segment, so consuming the whole buffer per message would silently drop
+    whatever followed — which is exactly what an early version of this class did.
+    """
 
     def __init__(self, channel: Channel) -> None:
         self._channel = channel
+        self._buf = bytearray()
 
     def send_message(self, payload: bytes) -> None:
         self._channel.send(dime.encode_message(payload))
@@ -99,30 +105,34 @@ class MessageStream:
         the peer to go quiet, so a slow or fragmented response is assembled rather
         than truncated.
         """
-        buf = bytearray()
         while True:
-            record, consumed, complete = self._try_parse(bytes(buf))
-            if complete:
-                dime.check_negotiated(record[1], record[2])
-                return record[0]
+            parsed = self._try_parse()
+            if parsed is not None:
+                payload, content_type, options, consumed = parsed
+                del self._buf[:consumed]
+                dime.check_negotiated(options, content_type)
+                return payload
             chunk = self._channel.recv(65536)
             if not chunk:
                 raise SsasConnectionError(
                     "connection closed before a complete message arrived"
                 )
-            buf.extend(chunk)
+            self._buf.extend(chunk)
 
-    @staticmethod
-    def _try_parse(buf: bytes) -> tuple[tuple[bytes, bytes, bytes], int, bool]:
-        """Parse if enough bytes are present; otherwise report incomplete."""
-        if len(buf) < dime.HEADER_LEN:
-            return (b"", b"", b""), 0, False
+    def _try_parse(self):
+        """Return (payload, content_type, options, consumed) or None if incomplete."""
+        if len(self._buf) < dime.HEADER_LEN:
+            return None
         try:
-            payload, content_type = dime.decode_message(buf)
-        except ProtocolError:
-            return (b"", b"", b""), 0, False
-        first, _ = dime.decode_record(buf, 0)
-        return (payload, first.options, content_type), len(buf), True
+            payload, content_type, options, next_offset = dime.decode_message_at(
+                bytes(self._buf), 0
+            )
+        except ProtocolError as exc:
+            # A truncated record just means "not yet"; a bad version is fatal.
+            if "truncated" in str(exc):
+                return None
+            raise
+        return payload, content_type, options, next_offset
 
     def close(self) -> None:
         self._channel.close()
