@@ -5,6 +5,7 @@ exit codes are the machine-readable form of FR-007/SC-005 -- an operator or a
 script has to tell "wrong port" from "wrong password" from "no permission"
 without parsing prose.
 """
+
 import pytest
 
 from ssas_xmla import probe
@@ -72,9 +73,7 @@ def test_success_prints_datasources_and_exits_zero(patched_connect, capsys):
         (ServerError("bad request"), 6, "SERVER REJECTED"),
     ],
 )
-def test_each_failure_category_has_its_own_exit_code(
-    patched_connect, capsys, error, code, phrase
-):
+def test_each_failure_category_has_its_own_exit_code(patched_connect, capsys, error, code, phrase):
     patched_connect(error)
     assert probe.main(ARGS) == code
     assert phrase in capsys.readouterr().err
