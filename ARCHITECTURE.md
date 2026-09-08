@@ -28,6 +28,8 @@ Strictly bottom-up: no lower layer imports a higher one.
             |
          auth.py      GSS-API/SPNEGO handshake carried inside SOAP
             |
+      sealing.py      per-message seal + the 4-byte frame header
+            |
       transport.py    socket lifecycle, timeouts, message reassembly
             |
          dime.py      DIME record framing and content-type negotiation
@@ -61,6 +63,25 @@ Incompleteness is signalled by an `IncompleteMessage` exception type, never by i
 error message. Detecting "need more bytes" by substring-matching was a real defect: a chunked
 message split at a record boundary raises a different message and was treated as fatal.
 
+### `sealing.py` — the post-authentication frame
+
+Every message after the handshake is sealed and wrapped in a 4-byte header:
+
+    uint16 dataSize | uint16 tokenSize | ciphertext | token
+
+**Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits, and
+getting it backwards is silently fatal: the server closes the connection with no error and
+logs nothing. [MS-SSAS] does not document this layer; it was recovered by decompiling
+`AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`).
+
+Two details that cost days to rediscover, both now in the module docstring:
+
+- The UTF-8 BOM is sealed as its **own frame** before the body, because the reference client
+  writes it through a `StreamWriter` whose preamble is a separate write.
+- `RESP_XPRESS` in the DIME OPTIONS byte makes the server return XPRESS-compressed XML, which
+  arrives as convincing binary noise rather than an error. The reference client sets it; this
+  one must not, having no decompressor.
+
 ### `auth.py` — the handshake
 
 [MS-SSAS] carries GSS-API security tokens **inside SOAP**: `Authenticate` out,
@@ -86,6 +107,48 @@ caller can act on without parsing text: `ConnectionError`, `AuthenticationError`
 `Credential` has **no password field**. Where NTLM needs one on a standalone server it is
 passed to the security layer directly and never retained, so no `repr` or log line can leak
 it.
+
+## How messages get split
+
+Three independent splits can apply to one message, each handled at a different layer. They
+compose, and a large response hits all three at once — `DBSCHEMA_COLUMNS` on a modest model
+returns over 1300 rows, well past every threshold below.
+
+### 1. Sealed-frame chunking — `sealing.py`
+
+A payload longer than `MAX_CHUNK` becomes several sealed frames, each with its own header,
+ciphertext and token. `unseal_message` walks them by their declared sizes and concatenates the
+plaintext.
+
+`MAX_CHUNK` is 2888, which is the reference client's `cbMaxToken` for NTLM — it reuses that
+value as the data chunk size. Nothing forces us to match it: smaller chunks are always valid,
+just more frames. The real ceiling is **65535**, because `dataSize` is a `uint16`;
+`seal_frame` raises rather than silently truncating past it. For Kerberos the reference client
+would use a larger chunk, and 2888 remains safe.
+
+### 2. DIME record chunking — `dime.py`
+
+A message too large for one record is split across several, with **CF** set on all but the
+last, **MB** on the first and **ME** on the last. `decode_message_at` reassembles until it
+sees `ME`. Per [MS-SSAS] a chunked sequence is contained within one message and never spans
+messages, so the boundary is unambiguous.
+
+### 3. TCP fragmentation — `transport.py`
+
+Reads are driven by the header's **declared lengths**, never by the peer going quiet, and the
+buffer persists across calls. Two failures here were real bugs rather than hypotheticals:
+
+- Incompleteness was once detected by substring-matching an exception message, so a chunked
+  message split at a record boundary — which raises a *different* message — was treated as
+  fatal. It is now a distinct `IncompleteMessage` type, meaning "read more", never
+  "malformed".
+- The reader once consumed its whole buffer per message, silently discarding anything a peer
+  packed into the same segment. It now consumes exactly one message and keeps the remainder.
+
+Padding counts too: a record whose declared bytes have arrived but whose 4-byte padding has
+not is **incomplete**, not decoded. Treating it as complete left the pad bytes in the stream,
+where they were read as the next message's header and surfaced as a bogus
+"unsupported DIME version" — a desync disguised as a protocol error.
 
 ## Testability: the byte seam
 
@@ -120,25 +183,6 @@ Instances are addressed by host and a **pinned port**. The named-instance redire
 not to speak the [MC-SQLR] framing that resolves database-engine instances on UDP 1434. A
 firewall rule is needed either way, so pinning the port in `msmdsrv.ini` costs the operator
 nothing.
-
-### `sealing.py` — the post-authentication frame
-
-Every message after the handshake is sealed and wrapped in a 4-byte header:
-
-    uint16 dataSize | uint16 tokenSize | ciphertext | token
-
-**Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits, and
-getting it backwards is silently fatal: the server closes the connection with no error and
-logs nothing. [MS-SSAS] does not document this layer; it was recovered by decompiling
-`AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`).
-
-Two details that cost days to rediscover, both now in the module docstring:
-
-- The UTF-8 BOM is sealed as its **own frame** before the body, because the reference client
-  writes it through a `StreamWriter` whose preamble is a separate write.
-- `RESP_XPRESS` in the DIME OPTIONS byte makes the server return XPRESS-compressed XML, which
-  arrives as convincing binary noise rather than an error. The reference client sets it; this
-  one must not, having no decompressor.
 
 ## Current status
 
