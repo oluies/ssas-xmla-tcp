@@ -350,3 +350,55 @@ The decisive next move is to obtain the real client's *plaintext* for a known re
 capturing a real session while also holding its session key, so its ciphertext can be
 decrypted and the wrapper read directly rather than inferred. Failing that, MS-SSAS's own
 Appendix A (product behaviour) is the only remaining documentary source not yet consulted.
+
+
+# SOLVED — 2026-09-08
+
+A `DISCOVER_DATASOURCES` now completes over the native TCP binding, from pure Python, and
+returns clean XML with a `SessionId`. The answer came from decompiling
+`Microsoft.AnalysisServices.AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`),
+not from the specification, which does not document this layer.
+
+## The frame
+
+    uint16  dataSize    little-endian, ciphertext length
+    uint16  tokenSize   little-endian, token length (16 for NTLM)
+    bytes   ciphertext  dataSize bytes
+    bytes   token       tokenSize bytes
+
+**Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits.
+
+## Every earlier reading of the header was wrong
+
+`03 00 10 00` is not `cBuffers=3, cbSecurityTrailer=16`, however neatly those constants fit.
+It is `dataSize=3, tokenSize=16`. And the "three varying bytes" at offsets 4–6, chased across
+four rounds of investigation, **were the ciphertext**: the first sealed frame carries the
+3-byte UTF-8 BOM, which the reference client writes separately because a `StreamWriter` emits
+its preamble as its own write. They varied per session because the RC4 keystream does.
+
+The arithmetic confirms it independently. The captured 563-byte record is exactly two frames:
+
+    4 + 3   + 16 =  23    BOM frame
+    4 + 520 + 16 = 540    body frame   (its header 08 02 10 00 was visible at offset 23)
+                   563    matches the capture
+
+`SecBufferDesc` never reaches the wire at all; it is allocated for the P/Invoke only.
+
+## What actually broke the nine attempts
+
+Two things at once, which is why no single permutation worked:
+
+1. **Byte order within the frame** — token-first instead of ciphertext-first.
+2. **The missing 4-byte header**, and with it the BOM frame.
+
+## One trap worth naming
+
+`RESP_XPRESS` in the DIME OPTIONS byte. The reference client sets it, so copying `0x11`
+verbatim makes the server return **XPRESS-compressed** XML — which arrives as convincing
+binary noise rather than an error. Use `0x01` (NEGO only) until a decompressor exists.
+
+## Corrected: sequence numbers
+
+`sequenceNumberForWrite` is passed to `EncryptMessage`, but **NTLM ignores it** and uses the
+context's own counter. The observed "seqnum 1" on the first body frame is simply the BOM frame
+having consumed 0. Nothing needs to fake a counter; letting `pyspnego` run unaided is correct.

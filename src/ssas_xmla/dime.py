@@ -49,9 +49,15 @@ OPT_REQ_XPRESS = 0x04
 OPT_RESP_SX = 0x08
 OPT_RESP_XPRESS = 0x10
 
-# What this client asks for: negotiation in progress, nothing binary, nothing
-# compressed. NEGO is left clear on our side; the server sets it when settled.
+# What this client asks for: nothing binary, nothing compressed. NEGO is clear on
+# the first record and set thereafter, mirroring the reference client.
+#
+# RESP_XPRESS matters more than it looks: setting it makes the server return
+# XPRESS-compressed XML, which arrives as convincing-looking garbage rather than
+# an error. The reference client sets it; we must not, since we do not implement
+# the decompressor.
 OPTIONS_CLEAR_TEXT = bytes([0x00, 0x00, 0x00, 0x00])
+OPTIONS_NEGOTIATED = bytes([OPT_NEGO, 0x00, 0x00, 0x00])
 
 
 def _pad(n: int) -> int:
