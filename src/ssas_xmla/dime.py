@@ -98,7 +98,7 @@ class Record:
         return b"".join(out)
 
 
-def decode_record(buf: bytes, offset: int = 0) -> tuple[Record, int]:
+def decode_record(buf: bytes | bytearray, offset: int = 0) -> tuple[Record, int]:
     """Decode one record starting at `offset`; return it and the next offset."""
     if len(buf) - offset < HEADER_LEN:
         raise IncompleteMessage("truncated DIME header")
@@ -115,7 +115,10 @@ def decode_record(buf: bytes, offset: int = 0) -> tuple[Record, int]:
         end = pos + length
         if end > len(buf):
             raise IncompleteMessage("truncated DIME record body")
-        fields.append(buf[pos:end])
+        # bytes(), so a bytearray buffer still yields immutable fields. This copies
+        # only the field, not the whole read buffer -- which is the point of taking
+        # the bytearray directly.
+        fields.append(bytes(buf[pos:end]))
         pos = end + _pad(length)
     if pos > len(buf):
         # The declared bytes arrived but their padding has not. Reporting the
@@ -142,7 +145,7 @@ def encode_message(payload: bytes, type_: bytes = TYPE_TEXT_XML) -> bytes:
     return Record(data=payload, type_=type_).encode()
 
 
-def decode_message_at(buf: bytes, offset: int = 0) -> tuple[bytes, bytes, bytes, int]:
+def decode_message_at(buf: bytes | bytearray, offset: int = 0) -> tuple[bytes, bytes, bytes, int]:
     """Reassemble one DIME message starting at `offset`.
 
     Returns (payload, content type, first record's OPTIONS, next offset). The next

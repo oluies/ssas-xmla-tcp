@@ -25,8 +25,18 @@ _NT_ACCOUNT = re.compile(r"(?<![A-Za-z]:)\b[A-Za-z][A-Za-z0-9._-]+\\[A-Za-z0-9._
 # exists to preserve: "cannot appear under Envelope/Body" (the error that
 # identified the Authenticate namespace bug), "text/xml" (the content type this
 # client negotiates), "TCP/IP" and "and/or" all became "<SPN>".
+# Case-INSENSITIVE: the conventional rendering in Kerberos/SSPI diagnostics is
+# lower-case (`host/server.corp.example`), and fault text lower-cases the class
+# freely, so a case-sensitive alternation let a machine FQDN through unscrubbed for
+# every host other than the literal one passed to make_scrubber. The false
+# positives the anchoring was added for stay excluded in every casing: `text/xml`,
+# `TCP/IP`, `and/or` and `Envelope/Body` match no service class, and
+# `http://my-server/soap` cannot match because `[A-Za-z0-9._-]+` will not cross the
+# second slash.
 _SPN = re.compile(
-    r"\b(?:HTTP|HOST|MSSQLSvc|MSOLAPSvc(?:\.[0-9]+)?|ldap|cifs)/[A-Za-z0-9._-]+",
+    r"\b(?:HTTP|HOST|RestrictedKrbHost|MSSQLSvc|MSOLAPSvc(?:\.[0-9]+)?|ldap|cifs)"
+    r"/[A-Za-z0-9._-]+",
+    re.IGNORECASE,
 )
 _CONN = re.compile(r"(?i)(Data Source|Provider|Initial Catalog|User ID|Password|Server)=[^;<\"]*")
 

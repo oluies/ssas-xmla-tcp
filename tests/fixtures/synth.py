@@ -45,6 +45,22 @@ def chunked_dime_message(parts: list[bytes]) -> bytes:
     return b"".join(out)
 
 
+def trickling(wire: bytes, per_read: int = 7):
+    """A channel that hands back a few bytes per read, whatever size was asked for.
+
+    Shared rather than redefined per test: TCP fragmentation is one behaviour, and
+    two copies of it drift. `per_read` is small on purpose — the reader must be
+    driven by the header's declared lengths, never by the peer going quiet.
+    """
+    from ssas_xmla.transport import BytesChannel
+
+    class Trickle(BytesChannel):
+        def recv(self, size):
+            return super().recv(per_read)
+
+    return Trickle(wire)
+
+
 AUTHENTICATE_RESPONSE = (
     '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
     '<AuthenticateResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
@@ -61,6 +77,17 @@ DISCOVER_DATASOURCES_RESPONSE = """<Envelope xmlns="http://schemas.xmlsoap.org/s
 <ProviderType>MDP</ProviderType>
 <AuthenticationMode>Integrated</AuthenticationMode></row>
 </root></return></DiscoverResponse></Body></Envelope>"""
+
+# The same response as above, but carrying the Session header the server returns
+# to BeginSession. [MS-SSAS] "Initialization for Non-HTTP Transport": every later
+# request MUST echo the SessionId, and without it the client re-sent BeginSession
+# forever and opened a new server-side session per request.
+DISCOVER_DATASOURCES_RESPONSE_WITH_SESSION = DISCOVER_DATASOURCES_RESPONSE.replace(
+    "<Body>",
+    '<Header><Session SessionId="A1B2C3" '
+    'xmlns="urn:schemas-microsoft-com:xml-analysis"/></Header><Body>',
+    1,
+)
 
 SOAP_FAULT = """<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>
 <Fault><faultcode>XMLAnalysisError.0xC10E0002</faultcode>

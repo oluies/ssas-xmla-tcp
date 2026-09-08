@@ -17,6 +17,7 @@ from .auth import Credential
 from .errors import (
     AuthenticationError,
     AuthorizationError,
+    ProtocolError,
     ServerError,
 )
 from .redact import make_scrubber
@@ -37,6 +38,31 @@ _DENIED_MARKERS = (
 )
 
 
+def _require_sealing_capable(context: object) -> None:
+    """Every post-handshake message is sealed, so a context that cannot is unusable."""
+    missing = [
+        name
+        for name in ("wrap_winrm", "unwrap_winrm")
+        if not callable(getattr(context, name, None))
+    ]
+    if missing:
+        raise AuthenticationError(
+            "the security context cannot seal messages",
+            f"missing {' and '.join(missing)}",
+        )
+
+
+def _looks_like_xmla(text: str) -> bool:
+    """Cheap shape check on an unsealed response, before it is parsed.
+
+    Deliberately not a parse: a SOAP fault is also a valid envelope and is handled
+    a step earlier, so this only has to separate "an XML document from the server"
+    from "plaintext that did not decrypt".
+    """
+    stripped = text.lstrip("\ufeff \t\r\n")
+    return stripped.startswith("<")
+
+
 def _catalog_kind(row: dict) -> str:
     """Report the model kind only when the server states it.
 
@@ -49,6 +75,14 @@ def _catalog_kind(row: dict) -> str:
     Determining the kind reliably needs a probe -- DISCOVER_CSDL_METADATA succeeds
     for tabular and faults for multidimensional -- which is a request, not a field,
     and so belongs to the caller rather than to row parsing.
+
+    **CATALOG_TYPE is UNVERIFIED.** Nothing in this repository establishes that a
+    real DBSCHEMA_CATALOGS rowset carries the column: it is not cited in
+    docs/discovery-brief.md and the recorded fixture does not contain it. If the
+    server does not emit it, `kind` is always "unknown" -- which is a documented,
+    honest value here rather than a wrong one, so the code is safe either way; but
+    do not treat a "tabular"/"multidimensional" answer as something this library
+    has been observed to produce. Confirming it needs one live DBSCHEMA_CATALOGS.
     """
     kind = (row.get("CATALOG_TYPE") or "").strip().lower()
     if kind in ("tabular", "multidimensional"):
@@ -132,6 +166,15 @@ class Session:
         password: str | None = None,
     ) -> Session:
         """Connect, negotiate and authenticate. A returned session is usable."""
+        # Reset everything scoped to a CONNECTION, not to the Session object.
+        # `Session` is a public dataclass with a public `open()`, so a reconnect on
+        # the same instance would otherwise send its first record with OPT_NEGO
+        # already set and a SessionId from the dead connection -- and wrong
+        # negotiation bits are silently fatal: the server closes the connection
+        # with no error and logs nothing.
+        self._first_record = True
+        self._context = None
+        self._session_id = None
         self._scrub = make_scrubber(
             host=self.target.host,
             user=self.credential.principal,
@@ -141,6 +184,12 @@ class Session:
             self._stream = MessageStream(chan)
             self.state = State.NEGOTIATED
             ctx = context or auth.build_context(self.credential, self.target.host, password)
+            # Checked here, not at first use. `auth.SecurityContext` needs only
+            # `step`/`complete`, so an injected context can satisfy the handshake
+            # and then die on the first request with a bare AttributeError --
+            # outside the FR-007 taxonomy the probe and the README's outcome table
+            # both depend on.
+            _require_sealing_capable(ctx)
             auth.handshake(ctx, self._send_authenticate)
             # Everything after the handshake is sealed with this context. The
             # server enforces it: an unsealed message is dropped with no error
@@ -244,8 +293,6 @@ class Session:
 
     def _roundtrip_rowset(self, payload: bytes) -> Rowset:
         assert self._stream is not None
-        if self._context is None:
-            raise AuthenticationError("no security context; the session is not open")
         self._stream.send_message(
             sealing.seal_message(self._context, payload), dime.OPTIONS_NEGOTIATED
         )
@@ -253,6 +300,18 @@ class Session:
         text = sealing.unseal_message(self._context, raw).decode("utf-8", errors="replace")
         self._capture_session_id(text)
         self._raise_for_fault(text)
+        # An empty rowset is a MEANINGFUL answer here -- `catalogs()` documents
+        # that none visible is distinct from refused -- so a response that is not
+        # XML at all must not arrive looking like one. `rowset.parse` returns an
+        # empty Rowset on a parse error, which was harmless while the payload was
+        # clear text and is not now: the likeliest failure of a cipher layer
+        # (wrong context, desynchronised sequence number, a mechanism whose
+        # framing differs) produces exactly that indistinguishable emptiness.
+        if not _looks_like_xmla(text):
+            raise ProtocolError(
+                "the unsealed response is not an XMLA envelope; the security "
+                "context or the frame layout is wrong"
+            )
         return rowset.parse(text)
 
     def _capture_session_id(self, text: str) -> None:

@@ -8,6 +8,8 @@ means the gate stays strict everywhere else. Addresses use RFC-5737
 documentation ranges, which are networking constants rather than anybody's host.
 """
 
+import pytest
+
 from ssas_xmla.redact import make_scrubber
 
 # Assembled so the literals never appear in the committed source.
@@ -127,3 +129,36 @@ def test_real_service_principal_names_are_still_removed():
     scrub = make_scrubber()
     for spn in ("MSOLAPSvc.3/box.corp", "HTTP/web01", "MSSQLSvc/db.corp"):
         assert spn not in scrub(f"target {spn} denied")
+
+
+@pytest.mark.parametrize(
+    "service_class",
+    ["host", "HOST", "Host", "http", "HTTP", "ldap", "LDAP", "cifs", "restrictedkrbhost"],
+)
+def test_spn_service_classes_are_matched_in_any_casing(service_class):
+    """The conventional rendering in Kerberos/SSPI diagnostics is LOWER case
+    (`host/server.corp.example`), and fault text lower-cases the class freely. A
+    case-sensitive alternation therefore let a machine FQDN through unscrubbed for
+    every host but the literal one passed to make_scrubber -- precisely the leak
+    this module exists to prevent (constitution I)."""
+    machine = "box.corp" + ".example"
+    out = make_scrubber()(f"target {service_class}/{machine} denied")
+    assert machine not in out
+    assert "<SPN>" in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "cannot appear under Envelope/Body",
+        "content type text/xml",
+        "TCP/IP was reset",
+        "either and/or applies",
+        "http://my-server/soap returned 500",
+    ],
+)
+def test_case_insensitivity_does_not_reintroduce_the_false_positives(text):
+    """The anchoring to real service classes exists because a generic word/word
+    pattern destroyed the diagnostics this scrubber preserves. Relaxing the CASE
+    must not relax the anchoring."""
+    assert make_scrubber()(text) == text

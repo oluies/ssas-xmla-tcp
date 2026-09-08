@@ -15,17 +15,27 @@ for the citations behind each layer. Claims not yet backed by a recorded fixture
 
 ## Status
 
-**Working.** A `Discover` completes over the native TCP binding, catalogs list, and DAX
-queries return rows — from pure Python, with no IIS and no Windows components:
+**Working over NTLM.** A `Discover` completes over the native TCP binding, catalogs list, and
+DAX queries return rows — from pure Python, with no IIS and no Windows components:
 
 ```
-$ python -m ssas_xmla.probe --host HOST --port 2383
+$ python -m ssas_xmla.probe --host HOST --port 2383 --mechanism ntlm
 OK - 1 data source(s):
   - HOST\TAB  Microsoft Analysis Services
 ```
 
 Verified against SQL Server 2022 Analysis Services, both a tabular and a multidimensional
 named instance, over NTLM.
+
+**Kerberos is UNVERIFIED.** The handshake is mechanism-agnostic and should work, but the frame
+layer was recovered from, and has only ever been exercised against, an NTLM session: the chunk
+size is NTLM's `cbMaxToken`, the token length is NTLM's, and — the part that actually bites —
+the frame has no field carrying the *unpadded* plaintext length. `spnego` reports zero padding
+for NTLM and non-zero for the GSS/Kerberos path, so a padding mechanism would hand the server
+XML with trailing bytes it cannot strip. `seal_frame` therefore **refuses** a mechanism that
+pads, naming the limitation, rather than producing a corrupt body. Lifting this needs either a
+Kerberos-capable fixture or the reference client's answer for the unpadded length; see
+[`docs/discovery-brief.md`](docs/discovery-brief.md).
 
 The layer that took the longest is the post-authentication frame, which [MS-SSAS] does not
 document. It was recovered by decompiling `AdomdClient` and is implemented in

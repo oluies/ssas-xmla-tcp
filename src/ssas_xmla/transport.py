@@ -13,7 +13,7 @@ from typing import Protocol
 
 from . import dime
 from .errors import ConnectionError as SsasConnectionError
-from .errors import IncompleteMessage
+from .errors import IncompleteMessage, ProtocolError
 
 
 class Channel(Protocol):
@@ -92,9 +92,16 @@ class MessageStream:
     whatever followed — which is exactly what an early version of this class did.
     """
 
-    def __init__(self, channel: Channel) -> None:
+    #: Ceiling on the unparsed read buffer. `data_len` in a DIME header is a uint32,
+    #: so a peer -- or a desynchronised stream read as a header -- can declare up to
+    #: 4 GiB and this reader would happily accumulate towards it. 64 MiB is far above
+    #: any real rowset and far below a memory problem.
+    MAX_BUFFER = 64 * 1024 * 1024
+
+    def __init__(self, channel: Channel, max_buffer: int | None = None) -> None:
         self._channel = channel
         self._buf = bytearray()
+        self._max_buffer = max_buffer if max_buffer is not None else self.MAX_BUFFER
 
     def send_message(self, payload: bytes, options: bytes | None = None) -> None:
         """Send one DIME message.
@@ -123,15 +130,25 @@ class MessageStream:
             if not chunk:
                 raise SsasConnectionError("connection closed before a complete message arrived")
             self._buf.extend(chunk)
+            # Reclassifying "no record set ME" as incomplete is right for chunking,
+            # but it also means a peer that never sets ME buffers until the
+            # connection closes. Bound it, and say which of the two it was.
+            if len(self._buf) > self._max_buffer:
+                raise ProtocolError(
+                    f"buffered {len(self._buf)} bytes without a complete DIME "
+                    f"message (limit {self._max_buffer}); the peer never set ME, "
+                    f"or the stream is desynchronised"
+                )
 
     def _try_parse(self):
         """Return (payload, content_type, options, consumed) or None if incomplete."""
         if len(self._buf) < dime.HEADER_LEN:
             return None
         try:
-            payload, content_type, options, next_offset = dime.decode_message_at(
-                bytes(self._buf), 0
-            )
+            # The bytearray goes in as-is: struct.unpack_from and slicing both take
+            # one. Copying it per read made assembling a large rowset quadratic in
+            # the response size, since _try_parse runs on every 64 KiB chunk.
+            payload, content_type, options, next_offset = dime.decode_message_at(self._buf, 0)
         except IncompleteMessage:
             # Not enough bytes yet. Every other ProtocolError is malformed input
             # and propagates -- discriminating on message text got this wrong for

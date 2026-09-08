@@ -119,11 +119,7 @@ def test_fault_on_the_terminal_authenticate_round_is_not_dropped():
     """For NTLM the client context completes as it emits its last token, so the
     handshake returns without inspecting the reply. A "Logon failure" there was
     silently dropped and the session reached AUTHENTICATED regardless."""
-    import pytest
-
-    from ssas_xmla import dime
     from ssas_xmla.client import connect
-    from ssas_xmla.errors import AuthenticationError
     from ssas_xmla.transport import BytesChannel
     from tests.unit.test_client_session import DoneContext
 
@@ -136,7 +132,6 @@ def test_fault_on_the_terminal_authenticate_round_is_not_dropped():
     ch = BytesChannel(synth.dime_message(fault.encode()))
     with pytest.raises(AuthenticationError, match="refused"):
         connect("h", 2383, channel=ch, context=DoneContext())
-    del dime
 
 
 # --- build_context: the bridge to pyspnego ------------------------------------

@@ -28,8 +28,6 @@ Strictly bottom-up: no lower layer imports a higher one.
             |
          auth.py      GSS-API/SPNEGO handshake carried inside SOAP
             |
-      sealing.py      per-message seal + the 4-byte frame header
-            |
       transport.py    socket lifecycle, timeouts, message reassembly
             |
          dime.py      DIME record framing and content-type negotiation
@@ -37,9 +35,14 @@ Strictly bottom-up: no lower layer imports a higher one.
           socket
 ```
 
-`envelopes.py` (SOAP construction), `rowset.py` (response parsing), `redact.py` (scrubbing)
-and `errors.py` (the failure categories) are used across layers and depend on nothing but the
-standard library.
+`sealing.py` is **not** in that stack, and the earlier placement of it between `auth.py` and
+`transport.py` read as though the handshake passed through it. It does not: the handshake is
+deliberately sent unsealed, and `sealing.py` imports only `errors` — it is a leaf that
+`client.py` applies to every message *after* the handshake, on the way into `transport.py`.
+
+`envelopes.py` (SOAP construction), `rowset.py` (response parsing), `sealing.py` (the
+post-handshake frame), `redact.py` (scrubbing) and `errors.py` (the failure categories) are
+used across layers and depend on nothing but the standard library.
 
 ### `dime.py` — framing
 
@@ -110,9 +113,13 @@ it.
 
 ## How messages get split
 
-Three independent splits can apply to one message, each handled at a different layer. They
-compose, and a large response hits all three at once — `DBSCHEMA_COLUMNS` on a modest model
-returns over 1300 rows, well past every threshold below.
+Three independent splits can apply to one message, each handled at a different layer, and they
+compose. What was actually observed against a live instance: `DBSCHEMA_COLUMNS` on a modest
+model returned over 1300 rows, and that response was sealed into many frames (layer 1) and
+arrived over many socket reads (layer 3). Whether the server *also* split it across DIME
+records was not recorded — DIME's `DATA_LENGTH` is a `uint32`, so there is no row count at
+which layer 2 must engage; chunking there is the sender's choice. The composition of all three
+is pinned by a test rather than by that run.
 
 ### 1. Sealed-frame chunking — `sealing.py`
 
@@ -124,7 +131,8 @@ plaintext.
 value as the data chunk size. Nothing forces us to match it: smaller chunks are always valid,
 just more frames. The real ceiling is **65535**, because `dataSize` is a `uint16`;
 `seal_frame` raises rather than silently truncating past it. For Kerberos the reference client
-would use a larger chunk, and 2888 remains safe.
+would use a larger chunk, and 2888 remains safe — but the chunk size is not what blocks
+Kerberos here; the missing unpadded-length field is (see **Current status**).
 
 ### 2. DIME record chunking — `dime.py`
 
@@ -145,10 +153,12 @@ buffer persists across calls. Two failures here were real bugs rather than hypot
 - The reader once consumed its whole buffer per message, silently discarding anything a peer
   packed into the same segment. It now consumes exactly one message and keeps the remainder.
 
-Padding counts too: a record whose declared bytes have arrived but whose 4-byte padding has
-not is **incomplete**, not decoded. Treating it as complete left the pad bytes in the stream,
-where they were read as the next message's header and surfaced as a bogus
-"unsupported DIME version" — a desync disguised as a protocol error.
+The padding rule that makes this work lives one layer down, in `dime.decode_record`, not here:
+a record whose declared bytes have arrived but whose 4-byte padding has not is **incomplete**,
+not decoded. `transport.py` only translates that `IncompleteMessage` into "read more". Treating
+such a record as complete left the pad bytes in the stream, where they were read as the next
+message's header and surfaced as a bogus "unsupported DIME version" — a desync disguised as a
+protocol error.
 
 ## Testability: the byte seam
 
@@ -186,5 +196,14 @@ nothing.
 
 ## Current status
 
-**Working.** Discover, catalog listing and DAX execution all complete against a live SQL
-Server 2022 instance over NTLM, on both a tabular and a multidimensional named instance.
+**Working over NTLM.** Discover, catalog listing and DAX execution all complete against a live
+SQL Server 2022 instance over NTLM, on both a tabular and a multidimensional named instance.
+
+**Kerberos is UNVERIFIED**, and deliberately fails closed rather than quietly. The frame layer
+above was recovered from an NTLM session and carries no field for the *unpadded* plaintext
+length; `spnego` reports zero padding for NTLM and non-zero for the GSS/Kerberos path, so a
+padding mechanism would put padding bytes inside `dataSize` with nothing to strip them by.
+`seal_frame` raises a `ProtocolError` naming the limitation instead of sending a body the
+server will fail to parse for reasons it cannot report usefully. Lifting this needs a
+Kerberos-capable fixture, or the reference client's answer for how it conveys the unpadded
+length.

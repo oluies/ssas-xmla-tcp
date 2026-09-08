@@ -36,7 +36,13 @@ def test_compatibility_level_alone_does_not_decide_the_kind():
 
 
 def test_kind_is_reported_when_the_server_states_it():
-    """CATALOG_TYPE is authoritative; both documented values are exercised."""
+    """IF the server states CATALOG_TYPE, both values map through.
+
+    This pins the mapping, not the column's existence: the body below is written by
+    hand precisely because no recorded fixture contains CATALOG_TYPE, and whether a
+    real DBSCHEMA_CATALOGS emits it is UNVERIFIED (see `_catalog_kind`). The
+    companion test above is the one that covers what has actually been observed --
+    a rowset without the column, reporting "unknown"."""
     body = (
         '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
         '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis"><return>'
@@ -113,8 +119,6 @@ def test_restriction_values_are_escaped():
 
 def test_restriction_names_are_validated_not_escaped():
     """An element NAME cannot be made safe by escaping; it has to be rejected."""
-    import pytest
-
     s, _ = _session(synth.EMPTY_ROWSET_RESPONSE)
     with pytest.raises(ValueError, match="invalid restriction name"):
         s.discover("MDSCHEMA_CUBES", restrictions={"</RestrictionList><Injected/><N": "v"})

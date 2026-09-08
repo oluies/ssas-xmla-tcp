@@ -1,5 +1,21 @@
 # Discovery brief — pure-Python SSAS XMLA over TCP
 
+> **RESOLVED — 2026-09-08. Read this banner before anything below it.**
+>
+> The post-authentication frame is a hand-rolled 4-byte header, `dataSize`/`tokenSize` as
+> little-endian `uint16`s, ciphertext first and token second, recovered by decompiling
+> `AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`). It is implemented in
+> [`src/ssas_xmla/sealing.py`](../src/ssas_xmla/sealing.py) and works end to end over NTLM.
+>
+> This document is kept as the **record of the investigation**, not as current fact. Two
+> sections below are refuted by that answer and are marked *Superseded* where they start:
+> the "STILL OPEN — the remaining blocker" list, and "The sealing/framing question is
+> ANSWERED: sealing is correct". Both read the three bytes at offsets 4–6 as an unexplained
+> residue; they are the first three bytes of ciphertext — the sealed UTF-8 BOM, which the
+> reference client emits as its own frame. RC4 keystream differs per session, which is why
+> they showed no constant across captures. The same correction applies to `open-questions.md`.
+
+
 Captured 2026-09-07. Everything below is sourced from Microsoft Open Specifications or a
 verified survey of existing tools. Where a fact could not be confirmed it is marked
 **UNVERIFIED** and MUST be settled empirically before it is designed against.
@@ -160,7 +176,8 @@ Kerberos.
   `urn:schemas-microsoft-com:xml-analysis`. Sending it under the XMLA namespace is rejected:
   *"The Authenticate element ... cannot appear under Envelope/Body"*.
 
-**STILL OPEN — the remaining blocker:**
+**~~STILL OPEN — the remaining blocker:~~** — *Superseded 2026-09-08: solved and
+implemented in `src/ssas_xmla/sealing.py`. Kept as the record of what was ruled out.*
 
 - **A Discover issued after a completed handshake resets the connection.** The server accepts
   the authentication, then drops the connection on the next message. Ruled out so far: setting
@@ -302,12 +319,17 @@ Also tested, all reset: `NegotiateOptions.wrapping_winrm` with header+signature+
 That is nine distinct sealed-message attempts now. The consistent reset with no server-side
 log entry says the server discards the message before it reaches anything that reports errors.
 
-**What is still unexplained** is the 3 bytes at offsets 4-6, between the constant `03 00 10 00`
+**~~What is still unexplained~~** — *Superseded 2026-09-08: they are the first three bytes of
+ciphertext, the sealed UTF-8 BOM, and `03 00 10 00` is not a constant header but
+`dataSize=3, tokenSize=16` for that very frame. The original reasoning follows.* The 3 bytes at
+offsets 4-6, between the constant `03 00 10 00`
 header and the NTLM signature at offset 7. They vary between captures, so they are not a
 constant, and 3 bytes is not a natural width for a length or a flag field — which suggests the
 whole layout is being read wrongly rather than that one field is missing.
 
-**Do not try a tenth framing.** The next step that would actually settle it is to decrypt a
+**~~Do not try a tenth framing.~~** — *Superseded: the tenth framing, taken from the decompiled
+reference client, is the one that works. The experiment proposed here was never needed.* The
+next step that would actually settle it is to decrypt a
 captured sealed message: capture a real session AND its NTLM session key (pyspnego can expose
 `session_key` on a context we control, so run our own authenticated session, capture our own
 sealed bytes, and compare against a real client's for the same request). If our ciphertext
@@ -315,7 +337,12 @@ differs structurally from theirs for identical plaintext, the problem is sealing
 matches, the problem is framing. That distinction is what nine guesses have failed to
 establish, and one experiment would.
 
-## The sealing/framing question is ANSWERED: sealing is correct (2026-09-08)
+## ~~The sealing/framing question is ANSWERED: sealing is correct~~ (2026-09-08)
+
+> **Superseded** by the decompile later the same day. Sealing *was* correct; the missing
+> piece was the 4-byte header around it, and the "three unexplained bytes" are the
+> sealed BOM. The stop rule and the conclusions drawn from it are left intact below
+> because the reasoning is sound — only the conclusion that nothing was missing is not.
 
 The stop rule asked one question -- *is our ciphertext structurally different from a real
 client's, or does it match?* -- because nine guesses had failed to establish which. Ran the

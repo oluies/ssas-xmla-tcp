@@ -71,3 +71,33 @@ def test_chunked_message_split_at_a_record_boundary_is_not_fatal():
 
     stream = MessageStream(SplitAtRecordBoundary(full, 32))
     assert stream.receive_message() == b"a" * 8 + b"b" * 8
+
+
+def test_a_peer_that_never_sets_me_is_bounded_rather_than_buffered_forever():
+    """Reclassifying "no record set ME" as incomplete is right for chunking, but it
+    also means a stream that never terminates buffers until the connection closes.
+    The DIME data_len field is a uint32, so a desynchronised read can declare up to
+    4 GiB and this reader would accumulate towards it."""
+    from ssas_xmla import dime
+    from ssas_xmla.errors import ProtocolError
+    from ssas_xmla.transport import BytesChannel, MessageStream
+
+    chunk = dime.Record(
+        data=b"x" * 512, type_=dime.TYPE_TEXT_XML, mb=True, me=False, cf=True, type_t=1
+    ).encode()
+    follow = dime.Record(data=b"y" * 512, mb=False, me=False, cf=True).encode()
+
+    class Endless(BytesChannel):
+        def __init__(self):
+            super().__init__()
+            self._first = True
+
+        def recv(self, size):  # keeps chunking, never sets ME
+            if self._first:
+                self._first = False
+                return chunk
+            return follow
+
+    stream = MessageStream(Endless(), max_buffer=8192)
+    with pytest.raises(ProtocolError, match="never set ME"):
+        stream.receive_message()

@@ -1,5 +1,17 @@
 # Open questions — the post-authentication framing
 
+> **RESOLVED — 2026-09-08. This document is history, not a task list.**
+>
+> Every question below is answered. The frame layout is a 4-byte header
+> (`dataSize`, `tokenSize`, both little-endian `uint16`), ciphertext before token, implemented
+> in [`src/ssas_xmla/sealing.py`](../src/ssas_xmla/sealing.py) and working over NTLM.
+>
+> Three settled-looking claims below are **wrong** and are marked *Superseded* where they
+> appear: `cBuffers = 3` (it is `dataSize = 3`), "the remaining unknown is singular" (there is
+> none), and "the remaining blocker" (there is none). The three mystery bytes are the sealed
+> UTF-8 BOM. Nothing here should be re-derived or acted on; read `ARCHITECTURE.md` instead.
+
+
 A research brief for an agent picking this up cold. **Read `docs/discovery-brief.md` first**;
 this lists only what is still unknown, and states what is already settled so none of it gets
 re-derived.
@@ -19,7 +31,8 @@ captures agree):
 
 **Settled — do not re-investigate:**
 
-- Sealing is correct. Our `pyspnego.wrap_winrm()` signature is structurally identical to the
+- *Superseded 2026-09-08 — true but incomplete: sealing was correct and a 4-byte header was
+  missing around it.* Sealing is correct. Our `pyspnego.wrap_winrm()` signature is structurally identical to the
   real client's: 16 bytes, version `01 00 00 00`, 8-byte checksum, 4-byte sequence number.
   **The problem is the wrapper, not the cryptography.**
 - Confidentiality flags were never missing: `spnego.client`'s default `context_req` is 62,
@@ -30,7 +43,10 @@ captures agree):
   namespace.
 - The `BeginSession` SOAP header is required by the spec and is implemented, but is not
   sufficient on its own.
-- Nine framing permutations have been tried and all reset. **Do not try a tenth by guessing.**
+- ~~Nine framing permutations have been tried~~ — *Superseded 2026-09-08: the count conflated
+  five distinct byte layouts with four wrapping-mode variants, and the tenth framing — taken
+  from the decompiled reference client rather than guessed — is the one that works.* Nine
+  sealed-message attempts were made and all reset. **Do not try a tenth by guessing.**
 
 **Still unknown:**
 
@@ -124,7 +140,9 @@ same mistake.**
 `03 00 10 00` reads naturally as two little-endian `uint16`s: **3** and **16**. Those are
 exactly the two constants an `EncryptMessage` call site would serialize first:
 
-- `cBuffers = 3` — the standard SSPI sealing layout is `SECBUFFER_TOKEN`,
+- ~~`cBuffers = 3`~~ — **Superseded 2026-09-08: it is `dataSize = 3`, the ciphertext length.**
+  `SecBufferDesc` never reaches the wire at all. The original reading follows:
+  `cBuffers = 3` — the standard SSPI sealing layout is `SECBUFFER_TOKEN`,
   `SECBUFFER_DATA`, `SECBUFFER_PADDING`
 - `cbBuffer = 16` for the token — NTLM's `cbSecurityTrailer` is 16, which is precisely the
   signature length you already match byte for byte
@@ -245,6 +263,14 @@ SPN-resolvable hostname, or by disabling Kerberos for the test account.
 That is almost certainly the fastest path to a definitive answer, and it needs nothing on
 the box.
 
+> **Handle with care, and clean up afterwards.** Wireshark's NTLMSSP password preference is
+> stored **in clear text** in the profile's `preferences` file, which is outside this
+> repository and therefore invisible to the leak gate and to constitution I. If you take this
+> route: use a throwaway test account, clear the `nt_password` preference (Preferences →
+> Protocols → NTLMSSP, or delete the line from `~/.config/wireshark/preferences`) as soon as
+> the capture is decoded, delete the capture itself, and re-enable Kerberos for the account.
+> The capture carries `SspiHandshake` tokens with the principal, realm and machine name (D6).
+
 **10:** SSAS Extended Events exist and can trace `Discover Begin`/`Command Begin`, but they
 sit **above** decryption — a sealed message the server rejects at the transport layer will
 never reach them. Their real value here is negative confirmation: if an xEvent fires, the
@@ -282,8 +308,14 @@ assumes — while confirming, by its absence, exactly where the SSAS problem is.
 
 **What is NOT there — and it is precisely this blocker:**
 
-    $ grep -rn "gss_wrap|gss_unwrap|EncryptMessage|DecryptMessage|QueryContextAttributes|cbSecurityTrailer" src/
+    $ grep -rnE "gss_wrap|gss_unwrap|EncryptMessage|DecryptMessage|QueryContextAttributes|cbSecurityTrailer" src/
     (nothing)
+
+> **Corrected 2026-09-08.** As originally pasted this used `grep -rn`, i.e. BRE, where `|` is a
+> LITERAL character — it searched for one long string no file could contain, so the empty
+> result was guaranteed and proved nothing. Re-run with `-rnE` (shown above) it is still empty,
+> so the conclusion below stands; but the command as first recorded would have produced the
+> same "(nothing)" whatever the truth was.
 
 **TDS never seals with the security context.** It obtains confidentiality from **TLS**,
 negotiated separately during PRELOGIN; the GSS/SSPI context authenticates and is then never
@@ -389,6 +421,9 @@ captures: `8e 70 87`, `13 2f 2f`, `4b a4 14` — no constant, no plausible lengt
 
 ## Test 2 (question 15) — sealing is MANDATORY
 
+> *Still true, and confirmed by the decompile: on the Privacy path there is one `Write`
+> override with no bypass.*
+
 Sent a clear-text `Discover` after a completed handshake, with three different context
 requests:
 
@@ -425,7 +460,10 @@ recording, because it is not obvious and will otherwise be attempted again.
 
 **The tokens are SPNEGO-wrapped, not raw NTLMSSP.** They are base64 inside `<SspiHandshake>`
 inside SOAP inside DIME, and the base64 decodes to an ASN.1 GSS-API token
-(`60 6c 06 06 2b 06 01 05 05 02` = SPNEGO OID) with the NTLMSSP message nested inside. So
+whose SPNEGO OID is `06 06 2b 06 01 05 05 02`, with the NTLMSSP message nested inside. (The
+capture reads `60 6c 06 06 2b 06 01 05 05 02`; the leading `60` is the `[APPLICATION 0]` tag
+and `6c` a DER length of 108 that varies per token, so only the 8-byte OID is a usable
+recognition marker.) So
 Wireshark never recognises them as NTLMSSP and never offers to decrypt, whatever preference is
 set. Unwrapping by hand is easy — search for `NTLMSSP\0` — and that part works.
 
@@ -473,7 +511,14 @@ Measured directly:
 | `protocol="ntlm"` (what this client used) | **0** |
 | `protocol="negotiate"` (what the real client uses) | **1** ✅ matches |
 
-**So the client should use `negotiate`, not `ntlm`.** That is a real defect independent of the
+**~~So the client should use `negotiate`, not `ntlm`.~~** — *Superseded 2026-09-08. Do NOT act
+on this. The very next paragraph records that under `negotiate` the handshake stopped
+completing (`complete=False`), so applying it would have traded a working handshake for an
+unestablished security context — in which the seal keys and the sequence counter are never set
+up, and the reset stops being evidence about anything. `auth.py` accepts `kerberos`,
+`negotiate` and `ntlm` and passes each through; which one to use is the caller's choice, and
+only `ntlm` has been exercised end to end. The original text follows.* The client should use
+`negotiate`, not `ntlm`. That is a real defect independent of the
 remaining blocker, and it explains an anomaly that two earlier rounds treated as mysterious.
 
 **Still not sufficient.** With SPNEGO the exchange runs two rounds, the server then returns an
@@ -481,7 +526,8 @@ empty token, and `pyspnego` still reports `complete=False`; the Discover resets 
 possibilities, untested: the SPNEGO exchange needs a further leg this loop does not drive
 (a final `mechListMIC` verification), or the reset is still the three-byte wrapper.
 
-**Remaining unknown is now singular:** the three bytes at offsets 4–6. The seqnum question is
+**~~Remaining unknown is now singular:~~** — *Superseded 2026-09-08: there is no remaining
+unknown. The three bytes at offsets 4–6 are the sealed UTF-8 BOM.* The three bytes at offsets 4–6. The seqnum question is
 closed, sealing is confirmed correct, and the protocol selection is understood.
 
 ## Prior-art checks — all three negative for the wrapper
