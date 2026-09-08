@@ -121,9 +121,26 @@ not to speak the [MC-SQLR] framing that resolves database-engine instances on UD
 firewall rule is needed either way, so pinning the port in `msmdsrv.ini` costs the operator
 nothing.
 
+### `sealing.py` — the post-authentication frame
+
+Every message after the handshake is sealed and wrapped in a 4-byte header:
+
+    uint16 dataSize | uint16 tokenSize | ciphertext | token
+
+**Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits, and
+getting it backwards is silently fatal: the server closes the connection with no error and
+logs nothing. [MS-SSAS] does not document this layer; it was recovered by decompiling
+`AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`).
+
+Two details that cost days to rediscover, both now in the module docstring:
+
+- The UTF-8 BOM is sealed as its **own frame** before the body, because the reference client
+  writes it through a `StreamWriter` whose preamble is a separate write.
+- `RESP_XPRESS` in the DIME OPTIONS byte makes the server return XPRESS-compressed XML, which
+  arrives as convincing binary noise rather than an error. The reference client sets it; this
+  one must not, having no decompressor.
+
 ## Current status
 
-The framing, negotiation and authentication layers are confirmed working against a live
-instance. Post-authentication messages are **GSS-sealed**, and reproducing that sealing is the
-remaining blocker — see `docs/discovery-brief.md`, which records what has been measured, what
-has been ruled out, and what to try next.
+**Working.** Discover, catalog listing and DAX execution all complete against a live SQL
+Server 2022 instance over NTLM, on both a tabular and a multidimensional named instance.

@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
-from . import auth, envelopes, rowset
+from . import auth, dime, envelopes, rowset, sealing
 from .auth import Credential
 from .errors import (
     AuthenticationError,
@@ -120,7 +120,9 @@ class Session:
     state: State = State.UNCONNECTED
     _stream: MessageStream | None = field(default=None, repr=False)
     _scrub: object = field(default=None, repr=False)
+    _first_record: bool = field(default=True, repr=False)
     _session_id: str | None = field(default=None, repr=False)
+    _context: object = field(default=None, repr=False)
 
     # -- lifecycle ------------------------------------------------------------
     def open(
@@ -140,7 +142,11 @@ class Session:
             self.state = State.NEGOTIATED
             ctx = context or auth.build_context(self.credential, self.target.host, password)
             auth.handshake(ctx, self._send_authenticate)
-            self.terms.protection = bool(getattr(ctx, "protection", False))
+            # Everything after the handshake is sealed with this context. The
+            # server enforces it: an unsealed message is dropped with no error
+            # and nothing in its log.
+            self._context = ctx
+            self.terms.protection = True
             self.state = State.AUTHENTICATED
             return self
         except Exception:
@@ -222,7 +228,10 @@ class Session:
 
     def _send_authenticate(self, token_b64: str) -> str:
         assert self._stream is not None
-        self._stream.send_message(envelopes.authenticate(token_b64))
+        # NEGO stays clear on the very first record and is set on every later one.
+        options = dime.OPTIONS_CLEAR_TEXT if self._first_record else dime.OPTIONS_NEGOTIATED
+        self._first_record = False
+        self._stream.send_message(sealing.BOM + envelopes.authenticate(token_b64), options)
         text = self._stream.receive_message().decode("utf-8", errors="replace")
         # Every authenticate response is fault-checked, including the terminal one.
         # For NTLM the client context completes the moment it emits its last token,
@@ -235,8 +244,13 @@ class Session:
 
     def _roundtrip_rowset(self, payload: bytes) -> Rowset:
         assert self._stream is not None
-        self._stream.send_message(payload)
-        text = self._stream.receive_message().decode("utf-8", errors="replace")
+        if self._context is None:
+            raise AuthenticationError("no security context; the session is not open")
+        self._stream.send_message(
+            sealing.seal_message(self._context, payload), dime.OPTIONS_NEGOTIATED
+        )
+        raw = self._stream.receive_message()
+        text = sealing.unseal_message(self._context, raw).decode("utf-8", errors="replace")
         self._capture_session_id(text)
         self._raise_for_fault(text)
         return rowset.parse(text)

@@ -6,14 +6,14 @@ from ssas_xmla.client import Catalog, connect
 from ssas_xmla.errors import AuthorizationError
 from ssas_xmla.transport import BytesChannel
 from tests.fixtures import synth
-from tests.unit.test_client_session import DoneContext
+from tests.unit.test_client_session import DoneContext, sealed, sent_plaintext
 
 
 def _session(*payloads):
     ch = BytesChannel()
     ch.queue(synth.dime_message(synth.AUTHENTICATE_RESPONSE.format(token="").encode()))
     for p in payloads:
-        ch.queue(synth.dime_message(p.encode()))
+        ch.queue(synth.dime_message(sealed(p.encode())))
     return connect("h", 2383, channel=ch, context=DoneContext()), ch
 
 
@@ -62,10 +62,10 @@ def test_session_id_is_captured_and_reused():
     )
     s, ch = _session(with_session, synth.EMPTY_ROWSET_RESPONSE)
     s.discover("DBSCHEMA_CATALOGS")
-    first = bytes(ch.sent)
+    first = sent_plaintext(ch)
     assert b"BeginSession" in first
     s.discover("DBSCHEMA_TABLES")
-    second = bytes(ch.sent)[len(first) :]
+    second = sent_plaintext(ch)[len(first) :]
     assert b'SessionId="ABC-123"' in second
     assert b"BeginSession" not in second
 
@@ -85,20 +85,20 @@ def test_refusal_raises_rather_than_returning_empty():
 def test_catalog_restricts_the_request():
     s, ch = _session(synth.EMPTY_ROWSET_RESPONSE)
     s.tables("AWTabular")
-    assert b"<Catalog>AWTabular</Catalog>" in bytes(ch.sent)
-    assert b"DBSCHEMA_TABLES" in bytes(ch.sent)
+    assert b"<Catalog>AWTabular</Catalog>" in sent_plaintext(ch)
+    assert b"DBSCHEMA_TABLES" in sent_plaintext(ch)
 
 
 def test_columns_requests_the_column_rowset():
     s, ch = _session(synth.EMPTY_ROWSET_RESPONSE)
     s.columns("AWTabular")
-    assert b"DBSCHEMA_COLUMNS" in bytes(ch.sent)
+    assert b"DBSCHEMA_COLUMNS" in sent_plaintext(ch)
 
 
 def test_restrictions_are_passed_through():
     s, ch = _session(synth.EMPTY_ROWSET_RESPONSE)
     s.discover("MDSCHEMA_CUBES", restrictions={"CUBE_NAME": "Sales"})
-    assert b"<CUBE_NAME>Sales</CUBE_NAME>" in bytes(ch.sent)
+    assert b"<CUBE_NAME>Sales</CUBE_NAME>" in sent_plaintext(ch)
 
 
 def test_restriction_values_are_escaped():
@@ -106,7 +106,7 @@ def test_restriction_values_are_escaped():
     unfiltered."""
     s, ch = _session(synth.EMPTY_ROWSET_RESPONSE)
     s.discover("MDSCHEMA_CUBES", restrictions={"CUBE_NAME": "A & B <x>"})
-    sent = bytes(ch.sent)
+    sent = sent_plaintext(ch)
     assert b"A &amp; B &lt;x&gt;" in sent
     assert b"<x>" not in sent.split(b"<RestrictionList>")[1].split(b"</RestrictionList>")[0]
 

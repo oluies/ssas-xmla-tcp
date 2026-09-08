@@ -14,14 +14,14 @@ from ssas_xmla.errors import (
 )
 from ssas_xmla.transport import BytesChannel
 from tests.fixtures import synth
-from tests.unit.test_client_session import DoneContext
+from tests.unit.test_client_session import DoneContext, sealed
 
 
 def _authed_channel(*payloads):
     ch = BytesChannel()
     ch.queue(synth.dime_message(synth.AUTHENTICATE_RESPONSE.format(token="").encode()))
     for p in payloads:
-        ch.queue(synth.dime_message(p.encode()))
+        ch.queue(synth.dime_message(sealed(p.encode())))
     return ch
 
 

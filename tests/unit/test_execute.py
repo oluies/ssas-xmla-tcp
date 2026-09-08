@@ -6,14 +6,14 @@ from ssas_xmla.client import ConnectionTarget, connect
 from ssas_xmla.errors import ServerError
 from ssas_xmla.transport import BytesChannel
 from tests.fixtures import synth
-from tests.unit.test_client_session import DoneContext
+from tests.unit.test_client_session import DoneContext, sealed, sent_plaintext
 
 
 def _session(*payloads):
     ch = BytesChannel()
     ch.queue(synth.dime_message(synth.AUTHENTICATE_RESPONSE.format(token="").encode()))
     for p in payloads:
-        ch.queue(synth.dime_message(p.encode()))
+        ch.queue(synth.dime_message(sealed(p.encode())))
     return connect("h", 2383, channel=ch, context=DoneContext()), ch
 
 
@@ -28,7 +28,7 @@ def test_returns_rows():
 def test_statement_is_carried_and_escaped():
     s, ch = _session(synth.EXECUTE_RESPONSE)
     s.execute("EVALUATE FILTER(T, T[x] < 5)")
-    sent = bytes(ch.sent)
+    sent = sent_plaintext(ch)
     assert b"<Statement>" in sent
     assert b"&lt; 5" in sent  # escaped, not raw
 
@@ -36,7 +36,7 @@ def test_statement_is_carried_and_escaped():
 def test_catalog_is_sent_when_given():
     s, ch = _session(synth.EXECUTE_RESPONSE)
     s.execute("EVALUATE Sales", catalog="AWTabular")
-    assert b"<Catalog>AWTabular</Catalog>" in bytes(ch.sent)
+    assert b"<Catalog>AWTabular</Catalog>" in sent_plaintext(ch)
 
 
 def test_malformed_query_surfaces_the_servers_own_text():

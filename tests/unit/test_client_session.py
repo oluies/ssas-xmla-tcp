@@ -11,9 +11,14 @@ from tests.fixtures import synth
 
 
 class DoneContext:
-    """A context that completes on the first step."""
+    """A context that completes on the first step, and can seal.
+
+    Sealing is a reversible XOR so wrap/unwrap round-trip without a KDC. The
+    token is NTLM-shaped (16 bytes) so frame arithmetic matches the real thing.
+    """
 
     protection = False
+    TOKEN = b"\x01\x00\x00\x00" + b"\xaa" * 12
 
     def __init__(self):
         self._stepped = False
@@ -26,11 +31,53 @@ class DoneContext:
     def complete(self):
         return self._stepped
 
+    def wrap_winrm(self, data):
+        return self.TOKEN, bytes(b ^ 0x5A for b in data), 0
+
+    def unwrap_winrm(self, header, data):
+        return bytes(b ^ 0x5A for b in data)
+
+
+def sealed(payload: bytes) -> bytes:
+    """Seal a fixture response the way the server would."""
+    from ssas_xmla import sealing
+
+    return sealing.seal_message(DoneContext(), payload)
+
+
+def sent_plaintext(channel) -> bytes:
+    """What the client actually asked for, read back through the seal.
+
+    Requests are sealed once a session is authenticated, so a test that greps
+    `channel.sent` for XML would only ever see ciphertext. This unwraps every DIME
+    record and unseals the ones that are sealed frames, so assertions can stay
+    written in terms of the request rather than its encryption.
+    """
+    from ssas_xmla import dime, sealing
+
+    ctx = DoneContext()
+    out, offset = [], 0
+    buf = bytes(channel.sent)
+    while offset < len(buf):
+        try:
+            record, offset = dime.decode_record(buf, offset)
+        except Exception:
+            break
+        body = record.data
+        try:
+            out.append(sealing.unseal_message(ctx, body))
+        except Exception:
+            out.append(body)  # plaintext handshake record
+    return b"".join(out)
+
 
 def _channel_for(*payloads):
+    """First payload is the plaintext handshake reply; the rest are sealed, as
+    the server sends them after authentication."""
     ch = BytesChannel()
-    for p in payloads:
-        ch.queue(synth.dime_message(p.encode()))
+    for i, p in enumerate(payloads):
+        body = p.encode() if i == 0 else sealed(p.encode())
+        ch.queue(synth.dime_message(body))
     return ch
 
 

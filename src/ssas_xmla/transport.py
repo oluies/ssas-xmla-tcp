@@ -96,8 +96,14 @@ class MessageStream:
         self._channel = channel
         self._buf = bytearray()
 
-    def send_message(self, payload: bytes) -> None:
-        self._channel.send(dime.encode_message(payload))
+    def send_message(self, payload: bytes, options: bytes | None = None) -> None:
+        """Send one DIME message.
+
+        `options` carries the negotiation bits. The first record leaves NEGO clear;
+        every later one sets it, mirroring the reference client.
+        """
+        record = dime.Record(data=payload, options=options or dime.OPTIONS_CLEAR_TEXT)
+        self._channel.send(record.encode())
 
     def receive_message(self) -> bytes:
         """Read one complete DIME message, honouring the record lengths.

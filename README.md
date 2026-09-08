@@ -15,18 +15,24 @@ for the citations behind each layer. Claims not yet backed by a recorded fixture
 
 ## Status
 
-**Partly working against a live instance.** Framing, content-type negotiation and the
-GSS-API/SPNEGO handshake are confirmed end to end; the authentication handshake completes
-against a real SQL Server 2022 Analysis Services instance.
+**Working.** A `Discover` completes over the native TCP binding, catalogs list, and DAX
+queries return rows — from pure Python, with no IIS and no Windows components:
 
-**The remaining blocker:** every message *after* the handshake is GSS-sealed, and reproducing
-that sealing is unfinished. The DIME TYPE field stays `text/xml` even once the payload is
-ciphertext, which is what made this hard to spot. `docs/discovery-brief.md` records what has
-been measured, what has been ruled out (nine distinct attempts), and what to try next.
+```
+$ python -m ssas_xmla.probe --host HOST --port 2383
+OK - 1 data source(s):
+  - HOST\TAB  Microsoft Analysis Services
+```
 
-So: the protocol stack is real and tested, but you cannot yet read metadata over TCP with it.
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the layers fit together and
-[`specs/001-ssas-xmla-tcp/`](specs/001-ssas-xmla-tcp/) for the spec, plan and task breakdown.
+Verified against SQL Server 2022 Analysis Services, both a tabular and a multidimensional
+named instance, over NTLM.
+
+The layer that took the longest is the post-authentication frame, which [MS-SSAS] does not
+document. It was recovered by decompiling `AdomdClient` and is implemented in
+[`sealing.py`](src/ssas_xmla/sealing.py); the reasoning is in
+[`docs/discovery-brief.md`](docs/discovery-brief.md).
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the layers fit together.
 
 ## Requirements
 
