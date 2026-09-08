@@ -452,3 +452,45 @@ primitives (`md4`, `hmac_md5`, `rc4k`, `sealkey`).
 
 **Consequence:** with one Windows host, question 9 is unavailable and **the ADOMD.NET
 decompile (section A) is now the best remaining route** — and it needs no server at all.
+
+## Test 4 — the seqnum anomaly is EXPLAINED: SPNEGO, not raw NTLM
+
+Prompted by the Samba comparison. `auth/ntlmssp/ntlmssp_sign.c` shows the standard NTLM seal
+output is exactly `[16-byte signature][ciphertext]` with no extra bytes
+(`gensec_ntlmssp_seal_packet`), and `seq_num` starts at **0**, incrementing per sealed message.
+So a first sealed message carrying seqnum 1 means something already signed once.
+
+It did. **The real client speaks SPNEGO; this client was speaking raw NTLM.** The captured
+tokens are ASN.1 GSS-API (`60 .. 06 06 2b 06 01 05 05 02` — the SPNEGO OID) with NTLMSSP
+nested inside, while `spnego.client(protocol="ntlm")` emits bare NTLMSSP. SPNEGO computes a
+**`mechListMIC`**, which signs and therefore consumes sequence number 0 — leaving 1 for the
+first sealed message.
+
+Measured directly:
+
+| protocol | first seal seqnum |
+|---|---|
+| `protocol="ntlm"` (what this client used) | **0** |
+| `protocol="negotiate"` (what the real client uses) | **1** ✅ matches |
+
+**So the client should use `negotiate`, not `ntlm`.** That is a real defect independent of the
+remaining blocker, and it explains an anomaly that two earlier rounds treated as mysterious.
+
+**Still not sufficient.** With SPNEGO the exchange runs two rounds, the server then returns an
+empty token, and `pyspnego` still reports `complete=False`; the Discover resets as before. Two
+possibilities, untested: the SPNEGO exchange needs a further leg this loop does not drive
+(a final `mechListMIC` verification), or the reset is still the three-byte wrapper.
+
+**Remaining unknown is now singular:** the three bytes at offsets 4–6. The seqnum question is
+closed, sealing is confirmed correct, and the protocol selection is understood.
+
+## Prior-art checks — all three negative for the wrapper
+
+| repo | verdict |
+|---|---|
+| `samba-team/samba` | Useful for NTLM semantics and it settled the seqnum question. But its seal output is `sig ‖ ciphertext` with no wrapper, so it cannot explain bytes 4–6. **SMB is not similar**: SMB3 seals with a 52-byte Transform Header, DCE/RPC uses a trailing 8-byte `sec_trailer`. Neither matches. |
+| `microsoft/Analysis-Services` | 1014 files of tooling and samples (AlmToolkit, BismNormalizer, job-graph events). Consumes ADOMD/AMO as a library; contains no wire-protocol code. |
+| `S-C-O-U-T/Pyadomd` | Three Python files, a pythonnet wrapper around ADOMD.NET. No wire protocol. |
+
+This strengthens the earlier conclusion: there is no prior art for the TCP wrapper, and the
+ADOMD.NET decompile is the route to those three bytes.
