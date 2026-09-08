@@ -1,5 +1,21 @@
 # Discovery brief — pure-Python SSAS XMLA over TCP
 
+> **RESOLVED — 2026-09-08. Read this banner before anything below it.**
+>
+> The post-authentication frame is a hand-rolled 4-byte header, `dataSize`/`tokenSize` as
+> little-endian `uint16`s, ciphertext first and token second, recovered by decompiling
+> `AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`). It is implemented in
+> [`src/ssas_xmla/sealing.py`](../src/ssas_xmla/sealing.py) and works end to end over NTLM.
+>
+> This document is kept as the **record of the investigation**, not as current fact. Two
+> sections below are refuted by that answer and are marked *Superseded* where they start:
+> the "STILL OPEN — the remaining blocker" list, and "The sealing/framing question is
+> ANSWERED: sealing is correct". Both read the three bytes at offsets 4–6 as an unexplained
+> residue; they are the first three bytes of ciphertext — the sealed UTF-8 BOM, which the
+> reference client emits as its own frame. RC4 keystream differs per session, which is why
+> they showed no constant across captures. The same correction applies to `open-questions.md`.
+
+
 Captured 2026-09-07. Everything below is sourced from Microsoft Open Specifications or a
 verified survey of existing tools. Where a fact could not be confirmed it is marked
 **UNVERIFIED** and MUST be settled empirically before it is designed against.
@@ -131,3 +147,285 @@ derived addition.
 | Milestone shape | Spike the handshake first, then build toward a general-purpose client library |
 | Auth in scope | Kerberos and NTLM. Anonymous is not a target |
 | Instance shape | Named instance — so port resolution matters (see the gap above) |
+
+
+## Live findings, 2026-09-07 (first run against a real instance)
+
+Fixture: SQL Server 2022, two **named** instances `TAB` and `MD`, pinned to ports 2383 and
+2384 (`Port` in `msmdsrv.ini`; they were on dynamic ports 49682/49683 before). Authentication
+is NTLM with a local reader account — the box is standalone, so there is no domain and no
+Kerberos.
+
+**Settled — these are no longer UNVERIFIED:**
+
+- **DIME framing is correct.** The header this client emits is byte-identical to the worked
+  example in [MS-SSAS] "Authentication": `0E 10 00 04 00 00 00 08 ...` — VERSION 1, MB/ME set,
+  OPTIONS_LENGTH 4, TYPE_LENGTH 8.
+- **Clear-text `text/xml` is ACCEPTED.** The server parsed our payload and replied in kind,
+  with no binary-XML or compression negotiation. **D2's assumption holds and the milestone's
+  scope stands** — [MS-BINXML] and XPRESS remain out of scope. This was the project's largest
+  single risk.
+- **The GSS/SPNEGO handshake completes.** Two round trips: client token -> server challenge ->
+  client response -> `<SspiHandshake/>` empty, context reports complete. Matches the spec's
+  worked example exactly.
+
+**Corrected — the spec was right and this client was wrong:**
+
+- `Authenticate` is NOT in the XMLA namespace. It belongs to
+  `http://schemas.microsoft.com/analysisservices/2003/ext`, while Discover and Execute use
+  `urn:schemas-microsoft-com:xml-analysis`. Sending it under the XMLA namespace is rejected:
+  *"The Authenticate element ... cannot appear under Envelope/Body"*.
+
+**~~STILL OPEN — the remaining blocker:~~** — *Superseded 2026-09-08: solved and
+implemented in `src/ssas_xmla/sealing.py`. Kept as the record of what was ruled out.*
+
+- **A Discover issued after a completed handshake resets the connection.** The server accepts
+  the authentication, then drops the connection on the next message. Ruled out so far: setting
+  the `NEGO` OPTIONS bit on post-handshake messages (as the spec's third example message does),
+  and GSS-wrapping the payload with the completed context. Both still reset.
+
+  **Ruled out by experiment** (each on a fresh connection, all reset identically):
+
+  | variant | result |
+  |---|---|
+  | `BeginSession` SOAP header, per [MS-SSAS] "Initialization for Non-HTTP Transport" | reset |
+  | UTF-8 BOM prefix, as the spec's example client messages carry (`EF BB BF`) | reset |
+  | `NEGO` OPTIONS bit set on the post-handshake message | reset |
+  | `NEGO` clear | reset |
+  | payload GSS-wrapped with the completed context | reset |
+  | no SOAP header at all | reset |
+
+  The `BeginSession` header IS required by the specification and is now known-correct
+  structure, so it should stay in the implementation regardless — it simply is not
+  sufficient on its own.
+
+  **What the server says: nothing.** `msmdsrv.log` records the service starting and
+  listening on the pinned port, but logs no entry whatsoever for these connections. The
+  reset therefore happens below the level SSAS logs, which argues against a permissions or
+  XML-validity problem and for a framing/transport-state mismatch after the handshake.
+
+  **Recommended next step, and it is not more guessing:** run a real client against the
+  instance *on the box itself* (SSMS, or ADOMD.NET over `localhost:2383`) with a packet
+  capture, then diff its post-handshake bytes against ours. Every layer up to and including
+  authentication is now confirmed working, so the divergence is in a small, bounded window
+  — one capture should show it outright. This is the discovery-driven approach the
+  constitution requires (principle IV): record what the wire actually carries rather than
+  inferring further from the specification.
+
+
+## TCP 2382 redirector — tested, still undocumented (2026-09-07)
+
+[MC-SQLR] specifies named-instance resolution over **UDP 1434** for the database engine:
+
+    request : 0x04 | InstanceName (MBCS) | 0x00        (CLNT_UCAST_INST)
+    response: 0x05 | RespSize (2 bytes)  | RespData    (semicolon-delimited, carries `tcp;`)
+
+The obvious hypothesis was that the SQL Browser speaks the same framing on **TCP 2382** for
+Analysis Services. **It does not.** Against a live browser (service running, port open at both
+firewalls, TCP connect succeeds), all of these time out with no response at all:
+
+| sent | result |
+|---|---|
+| `0x04` + `TAB` + NUL (CLNT_UCAST_INST) | no response |
+| `0x04` + `MD` + NUL | no response |
+| `0x03` (CLNT_UCAST_EX, enumerate) | no response |
+| bare instance name, no opcode | no response |
+
+So the earlier conclusion holds, now on evidence rather than on absence of a document: the
+TCP 2382 exchange is not publicly specified and is not MC-SQLR over TCP. **D4 stands** — pin
+the instance port in `msmdsrv.ini` and address it directly. A firewall rule is needed either
+way, so this costs the operator nothing.
+
+
+## Why the post-handshake Discover was reset — SOLVED (2026-09-07)
+
+Captured a complete, working ADOMD.NET 160 session against the live instance through a
+logging TCP relay (ADOMD -> relay -> 2383). The client-to-server records tell the whole story:
+
+| record | TYPE | OPTIONS | payload |
+|---|---|---|---|
+| 1 | `text/xml` | `0x10` = RESP_XPRESS | plaintext XML `Authenticate` (BOM-prefixed) |
+| 2 | `text/xml` | `0x11` = NEGO \| RESP_XPRESS | plaintext XML `Authenticate` |
+| 3+ | `text/xml` | `0x11` = NEGO \| RESP_XPRESS | **binary — GSS-sealed, not XML** |
+
+**Every message after the handshake is sealed.** That is why all six of our plaintext variants
+were reset: the server was never going to accept cleartext XML post-authentication, no matter
+what SOAP header or NEGO bit accompanied it. Our one GSS-wrap attempt was the right instinct
+but wrong in detail — it did not set RESP_XPRESS, and the sealed payload carries its own small
+framing header (record 3 begins `03 00 10 00` before the ciphertext) that we did not reproduce.
+
+**Two corrections to earlier conclusions:**
+
+- **T031 needs restating.** Clear-text `text/xml` is accepted *for the handshake only*. It is
+  NOT the steady-state encoding. The DIME TYPE stays `text/xml` throughout, so the type field
+  alone does not tell you whether the payload is plaintext — which is exactly how this misled
+  us. [MS-BINXML] is still out of scope (the sealed payload is not binary XML), but "clear text
+  works" was too broad a reading.
+- **`check_negotiated()` is wrong as written.** The real client sets `RESP_XPRESS` from its
+  very first record, so our guard would reject a correct exchange. The bit is a client
+  *request*, not a server imposition; only the server's chosen response encoding should be
+  enforced.
+
+**Next: implement sealing.** Decode the small pre-ciphertext header on record 3, then wrap
+each post-handshake payload with the completed context. The capture is the reference.
+
+**The capture was NOT committed**, and must never be: records 1 and 2 contain real
+`SspiHandshake` tokens carrying the principal, realm and machine name. It was deleted from the
+server after analysis. This is D6 in practice — the reason synthetic handshake fixtures exist.
+
+
+### The sealed-message framing — measured, not yet reproduced
+
+Two independent captures of a real ADOMD.NET client agree on the layout of the first sealed
+message (record 3). Byte offsets, with the two captures side by side:
+
+    offset  0  1  2  3 | 4  5  6 | 7 .. 22                          | 23 ...
+    cap A   03 00 10 00 | 8e 70 87 | 01 00 00 00 <8-byte checksum> 01 00 00 00 | 08 ...
+    cap B   03 00 10 00 | 13 2f 2f | 01 00 00 00 <8-byte checksum> 01 00 00 00 | 08 ...
+
+- Bytes 0-3 are **constant**: `03 00 10 00`, reading naturally as uint16(3), uint16(16) where
+  16 is the NTLM signature length.
+- Bytes 4-6 **vary between captures** — three bytes, not obviously a length or a constant.
+- Bytes 7-22 are a textbook NTLM signature: version `01 00 00 00`, 8-byte checksum, seqnum 1.
+  `pyspnego.wrap_winrm()` produces a byte-for-byte structurally identical 16-byte header, so
+  our signature generation is right; only its placement is not.
+
+**Framings tried live, all reset:** header+sig+data; header+3 zero bytes+sig+data;
+sig+data with no header; header+data+sig; header+3-byte length+sig+data.
+
+**The most promising untested lead is not framing at all.** A real client negotiates specific
+NTLM flags — `NTLMSSP_NEGOTIATE_SEAL`, `NTLMSSP_NEGOTIATE_KEY_EXCH`, 128-bit — and if
+`pyspnego`'s default context does not request confidentiality, the session key material is not
+set up for the RC4 sealing the server expects. Every sealed message we send would then be
+garbage to it *regardless of framing*, which fits the evidence better than five wrong framings
+in a row does. Check `spnego.client(..., options=...)` / `context_req` for confidentiality
+before trying more byte layouts.
+
+Both captures were deleted from the server and locally after analysis. They contain real
+`SspiHandshake` tokens carrying the principal, realm and machine name, and MUST NOT be
+committed (D6).
+
+
+### Confidentiality flags — tested, and the hypothesis was wrong
+
+The previous entry called missing NTLM confidentiality flags "the most promising untested
+lead". It was wrong, and cheaply so: `spnego.client`'s default `context_req` is **62**, which
+decomposes to `mutual_auth | replay_detect | sequence_detect | confidentiality | integrity`.
+Confidentiality was requested all along.
+
+Also tested, all reset: `NegotiateOptions.wrapping_winrm` with header+signature+data,
+`wrapping_winrm` with `wrap()`, default options with `wrap()`, and `wrap()` with no header.
+
+That is nine distinct sealed-message attempts now. The consistent reset with no server-side
+log entry says the server discards the message before it reaches anything that reports errors.
+
+**~~What is still unexplained~~** — *Superseded 2026-09-08: they are the first three bytes of
+ciphertext, the sealed UTF-8 BOM, and `03 00 10 00` is not a constant header but
+`dataSize=3, tokenSize=16` for that very frame. The original reasoning follows.* The 3 bytes at
+offsets 4-6, between the constant `03 00 10 00`
+header and the NTLM signature at offset 7. They vary between captures, so they are not a
+constant, and 3 bytes is not a natural width for a length or a flag field — which suggests the
+whole layout is being read wrongly rather than that one field is missing.
+
+**~~Do not try a tenth framing.~~** — *Superseded: the tenth framing, taken from the decompiled
+reference client, is the one that works. The experiment proposed here was never needed.* The
+next step that would actually settle it is to decrypt a
+captured sealed message: capture a real session AND its NTLM session key (pyspnego can expose
+`session_key` on a context we control, so run our own authenticated session, capture our own
+sealed bytes, and compare against a real client's for the same request). If our ciphertext
+differs structurally from theirs for identical plaintext, the problem is sealing; if it
+matches, the problem is framing. That distinction is what nine guesses have failed to
+establish, and one experiment would.
+
+## ~~The sealing/framing question is ANSWERED: sealing is correct~~ (2026-09-08)
+
+> **Superseded** by the decompile later the same day. Sealing *was* correct; the missing
+> piece was the 4-byte header around it, and the "three unexplained bytes" are the
+> sealed BOM. The stop rule and the conclusions drawn from it are left intact below
+> because the reasoning is sound — only the conclusion that nothing was missing is not.
+
+The stop rule asked one question -- *is our ciphertext structurally different from a real
+client's, or does it match?* -- because nine guesses had failed to establish which. Ran the
+experiment: authenticate our own session, seal the same plaintext, compare against the
+captured real client's first sealed message.
+
+    ours: 01 00 00 00 ff c1 01 ef 80 c9 ca d9 | 00 00 00 00     seqnum 0
+    real: 01 00 00 00 5e ee 17 03 e1 e3 3b 51 | 01 00 00 00     seqnum 1
+
+**Structurally identical.** Same 16-byte length, same NTLM layout: version `01 00 00 00`,
+8-byte checksum, 4-byte sequence number. `pyspnego.wrap_winrm()` produces exactly the shape
+the server produces.
+
+**So the problem is NOT sealing, and never was.** Every hypothesis about confidentiality
+flags, wrapping mode and key material was aimed at the wrong layer. What differs is:
+
+1. **The sequence number.** Ours starts at 0; the real client's first sealed message carries
+   1, so its counter advanced once during authentication. Advancing ours by a throwaway wrap
+   did not by itself make the exchange succeed, so this is necessary-but-not-sufficient.
+2. **The three bytes at offsets 4-6**, between the constant `03 00 10 00` and the signature.
+   These remain the one genuinely unexplained element, and with sealing eliminated they are
+   now the *only* candidate.
+
+**What this narrows it to.** The message is `[4-byte constant][3 bytes ???][16-byte NTLM
+signature][ciphertext]`. Three is not a natural width for a length or a flag field, which
+argues the four-byte prefix is not a header in the way it looks -- more likely the whole
+leading region is a structure being read wrongly, e.g. a buffer-descriptor list where the
+field boundaries fall differently.
+
+**Do not resume by guessing layouts; nine attempts is enough evidence that it does not work.**
+The decisive next move is to obtain the real client's *plaintext* for a known request -- by
+capturing a real session while also holding its session key, so its ciphertext can be
+decrypted and the wrapper read directly rather than inferred. Failing that, MS-SSAS's own
+Appendix A (product behaviour) is the only remaining documentary source not yet consulted.
+
+
+# SOLVED — 2026-09-08
+
+A `DISCOVER_DATASOURCES` now completes over the native TCP binding, from pure Python, and
+returns clean XML with a `SessionId`. The answer came from decompiling
+`Microsoft.AnalysisServices.AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`),
+not from the specification, which does not document this layer.
+
+## The frame
+
+    uint16  dataSize    little-endian, ciphertext length
+    uint16  tokenSize   little-endian, token length (16 for NTLM)
+    bytes   ciphertext  dataSize bytes
+    bytes   token       tokenSize bytes
+
+**Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits.
+
+## Every earlier reading of the header was wrong
+
+`03 00 10 00` is not `cBuffers=3, cbSecurityTrailer=16`, however neatly those constants fit.
+It is `dataSize=3, tokenSize=16`. And the "three varying bytes" at offsets 4–6, chased across
+four rounds of investigation, **were the ciphertext**: the first sealed frame carries the
+3-byte UTF-8 BOM, which the reference client writes separately because a `StreamWriter` emits
+its preamble as its own write. They varied per session because the RC4 keystream does.
+
+The arithmetic confirms it independently. The captured 563-byte record is exactly two frames:
+
+    4 + 3   + 16 =  23    BOM frame
+    4 + 520 + 16 = 540    body frame   (its header 08 02 10 00 was visible at offset 23)
+                   563    matches the capture
+
+`SecBufferDesc` never reaches the wire at all; it is allocated for the P/Invoke only.
+
+## What actually broke the nine attempts
+
+Two things at once, which is why no single permutation worked:
+
+1. **Byte order within the frame** — token-first instead of ciphertext-first.
+2. **The missing 4-byte header**, and with it the BOM frame.
+
+## One trap worth naming
+
+`RESP_XPRESS` in the DIME OPTIONS byte. The reference client sets it, so copying `0x11`
+verbatim makes the server return **XPRESS-compressed** XML — which arrives as convincing
+binary noise rather than an error. Use `0x01` (NEGO only) until a decompressor exists.
+
+## Corrected: sequence numbers
+
+`sequenceNumberForWrite` is passed to `EncryptMessage`, but **NTLM ignores it** and uses the
+context's own counter. The observed "seqnum 1" on the first body frame is simply the BOM frame
+having consumed 0. Nothing needs to fake a counter; letting `pyspnego` run unaided is correct.

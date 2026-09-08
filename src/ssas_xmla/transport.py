@@ -1,0 +1,160 @@
+"""Socket lifecycle and message framing over it.
+
+The byte seam is the point of this module. `Channel` is a protocol with two
+methods; the real one wraps a socket, and tests supply recorded bytes. Every layer
+above therefore runs with sockets disabled (constitution III), with no stub server
+to keep in sync.
+"""
+
+from __future__ import annotations
+
+import socket
+from typing import Protocol
+
+from . import dime
+from .errors import ConnectionError as SsasConnectionError
+from .errors import IncompleteMessage, ProtocolError
+
+
+class Channel(Protocol):
+    """A bidirectional byte stream. The seam that makes everything above testable."""
+
+    def send(self, data: bytes) -> None: ...
+
+    def recv(self, size: int) -> bytes: ...
+
+    def close(self) -> None: ...
+
+
+class SocketChannel:
+    """A real TCP socket, with a deadline on every wait (FR-009)."""
+
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        self._host = host
+        try:
+            self._sock = socket.create_connection((host, port), timeout=timeout)
+        except OSError as exc:
+            # Deliberately does not include the host: constitution I.
+            raise SsasConnectionError(f"could not connect on port {port}") from exc
+        self._sock.settimeout(timeout)
+
+    def send(self, data: bytes) -> None:
+        try:
+            self._sock.sendall(data)
+        except OSError as exc:
+            raise SsasConnectionError("send failed") from exc
+
+    def recv(self, size: int) -> bytes:
+        try:
+            return self._sock.recv(size)
+        except TimeoutError as exc:
+            raise SsasConnectionError("timed out waiting for a response") from exc
+        except OSError as exc:
+            raise SsasConnectionError("receive failed") from exc
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
+class BytesChannel:
+    """A channel backed by a recorded response. For tests and fixture replay."""
+
+    def __init__(self, response: bytes = b"") -> None:
+        self.sent = bytearray()
+        self._response = response
+        self._pos = 0
+        self.closed = False
+
+    def send(self, data: bytes) -> None:
+        self.sent.extend(data)
+
+    def recv(self, size: int) -> bytes:
+        chunk = self._response[self._pos : self._pos + size]
+        self._pos += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+    def queue(self, response: bytes) -> None:
+        """Append another response, for a multi-round-trip exchange."""
+        self._response += response
+
+
+class MessageStream:
+    """Sends and receives whole DIME messages over a Channel.
+
+    Holds a read buffer between calls. A peer may pack several messages into one
+    TCP segment, so consuming the whole buffer per message would silently drop
+    whatever followed — which is exactly what an early version of this class did.
+    """
+
+    #: Ceiling on the unparsed read buffer. `data_len` in a DIME header is a uint32,
+    #: so a peer -- or a desynchronised stream read as a header -- can declare up to
+    #: 4 GiB and this reader would happily accumulate towards it. 64 MiB is far above
+    #: any real rowset and far below a memory problem.
+    MAX_BUFFER = 64 * 1024 * 1024
+
+    def __init__(self, channel: Channel, max_buffer: int | None = None) -> None:
+        self._channel = channel
+        self._buf = bytearray()
+        self._max_buffer = max_buffer if max_buffer is not None else self.MAX_BUFFER
+
+    def send_message(self, payload: bytes, options: bytes | None = None) -> None:
+        """Send one DIME message.
+
+        `options` carries the negotiation bits. The first record leaves NEGO clear;
+        every later one sets it, mirroring the reference client.
+        """
+        record = dime.Record(data=payload, options=options or dime.OPTIONS_CLEAR_TEXT)
+        self._channel.send(record.encode())
+
+    def receive_message(self) -> bytes:
+        """Read one complete DIME message, honouring the record lengths.
+
+        Reads are driven by the header's declared lengths rather than by waiting for
+        the peer to go quiet, so a slow or fragmented response is assembled rather
+        than truncated.
+        """
+        while True:
+            parsed = self._try_parse()
+            if parsed is not None:
+                payload, content_type, options, consumed = parsed
+                del self._buf[:consumed]
+                dime.check_negotiated(options, content_type)
+                return payload
+            chunk = self._channel.recv(65536)
+            if not chunk:
+                raise SsasConnectionError("connection closed before a complete message arrived")
+            self._buf.extend(chunk)
+            # Reclassifying "no record set ME" as incomplete is right for chunking,
+            # but it also means a peer that never sets ME buffers until the
+            # connection closes. Bound it, and say which of the two it was.
+            if len(self._buf) > self._max_buffer:
+                raise ProtocolError(
+                    f"buffered {len(self._buf)} bytes without a complete DIME "
+                    f"message (limit {self._max_buffer}); the peer never set ME, "
+                    f"or the stream is desynchronised"
+                )
+
+    def _try_parse(self):
+        """Return (payload, content_type, options, consumed) or None if incomplete."""
+        if len(self._buf) < dime.HEADER_LEN:
+            return None
+        try:
+            # The bytearray goes in as-is: struct.unpack_from and slicing both take
+            # one. Copying it per read made assembling a large rowset quadratic in
+            # the response size, since _try_parse runs on every 64 KiB chunk.
+            payload, content_type, options, next_offset = dime.decode_message_at(self._buf, 0)
+        except IncompleteMessage:
+            # Not enough bytes yet. Every other ProtocolError is malformed input
+            # and propagates -- discriminating on message text got this wrong for
+            # chunked messages split at a record boundary.
+            return None
+        return payload, content_type, options, next_offset
+
+    def close(self) -> None:
+        self._channel.close()

@@ -5,3 +5,11 @@ __pycache__/
 .run-*.yaml
 dist/
 *.egg-info/
+.venv/
+*.egg-info/
+# roborev snapshots
+/.roborev/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

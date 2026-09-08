@@ -1,0 +1,158 @@
+"""The GSS-API / SPNEGO handshake, carried inside Authenticate SOAP messages.
+
+[MS-SSAS] Authentication and Encryption:
+
+  "To use an authenticated or encrypted connection using TCP, both the client and
+   server MUST use GSS-API [RFC4178]. ... The client sends its security token using
+   the Authenticate request and the server responds with its security token in the
+   AuthenticateResponse message. This exchange ... continues back and forth until
+   GSS-API reports completion or error."
+
+One loop serves Kerberos and NTLM: the specification describes a mechanism-agnostic
+exchange, and pyspnego presents exactly that shape, so NTLM costs nothing extra once
+Kerberos works.
+
+Nothing in this module may log a token. A SPNEGO token carries the principal, the
+realm and the target service (constitution I).
+"""
+
+from __future__ import annotations
+
+import base64
+import re
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from .errors import AuthenticationError, ProtocolError
+
+_TOKEN = re.compile(r"<SspiHandshake[^>]*>(.*?)</SspiHandshake>", re.S)
+_RETURN = re.compile(r"<return[^>]*>(.*?)</return>", re.S)
+
+MAX_ROUNDS = 10  # a handshake needing more than this is a loop, not progress
+
+
+@dataclass(frozen=True)
+class Credential:
+    """What the security layer authenticates with.
+
+    Deliberately has no password field. Where NTLM needs one it goes straight to the
+    security layer and is not retained here, so no code path can leak a credential
+    by logging a Credential.
+    """
+
+    mechanism: str = "kerberos"  # or "ntlm" or "negotiate"
+    principal: str | None = None  # None means the ambient identity
+    service: str = "MSOLAPSvc.3"
+    instance: str | None = None  # a named instance, if the SPN is registered that way
+    spn: str | None = None  # full override, when neither form below is right
+
+    def target(self, host: str, port: int | None = None) -> str:
+        """The SPN to request. NTLM ignores it; Kerberos does not.
+
+        Mirrors ADOMD's `CalculateNTAuthenticationSPN`: a named instance registers
+        as ``MSOLAPSvc.3/<server>:<instance>``, and otherwise the SPN carries the
+        **port** -- `DsMakeSpn` is called with it, producing
+        ``MSOLAPSvc.3/<server>:<port>``, not the portless form. Requesting
+        ``MSOLAPSvc.3/<server>`` is the shape NTLM tolerated and Kerberos will not.
+        """
+        if self.spn:
+            return self.spn
+        if self.instance:
+            return f"{self.service}/{host}:{self.instance}"
+        if port is not None:
+            return f"{self.service}/{host}:{port}"
+        return f"{self.service}/{host}"
+
+
+class SecurityContext(Protocol):
+    """The slice of a GSS-API context this module uses. Injected so tests need no
+    real credentials, no KDC and no pyspnego at import time."""
+
+    def step(self, in_token: bytes | None = None) -> bytes | None: ...
+
+    @property
+    def complete(self) -> bool: ...
+
+
+def extract_token(response_xml: str) -> str:
+    """Pull the server's base64 token out of an AuthenticateResponse."""
+    match = _TOKEN.search(response_xml) or _RETURN.search(response_xml)
+    if match is None:
+        raise ProtocolError("AuthenticateResponse carried no security token")
+    return match.group(1).strip()
+
+
+def build_context(
+    credential: Credential,
+    host: str,
+    password: str | None = None,
+    port: int | None = None,
+) -> SecurityContext:
+    """Create a real SPNEGO context. Imported lazily so parser tests need no pyspnego.
+
+    `password` is for the standalone (non-domain) case, where NTLM has no ambient
+    identity to draw on. It is handed straight to the security layer and is never
+    stored on Credential — that is what keeps repr() and any log line safe.
+    """
+    try:
+        import spnego  # ty: ignore[unresolved-import]
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise AuthenticationError(
+            "pyspnego is required for authentication: pip install pyspnego"
+        ) from exc
+
+    mechanism = credential.mechanism.lower()
+    # Reject rather than silently coerce. Credential is public API and the
+    # integration config feeds it straight from $SSAS_MECHANISM, so a typo used to
+    # become NTLM without a word -- authenticating with a mechanism the caller did
+    # not ask for.
+    if mechanism not in ("kerberos", "negotiate", "ntlm"):
+        raise AuthenticationError(
+            f"unknown authMechanism {credential.mechanism!r}; expected kerberos, negotiate or ntlm"
+        )
+    protocol = "ntlm" if mechanism == "ntlm" else mechanism
+    # `hostname` carries the whole host part of the SPN, port included, because
+    # spnego composes it as f"{service}/{hostname}" and the reference client's SPN
+    # is `MSOLAPSvc.3/host:port`. NTLM ignores the target, which is why the portless
+    # form worked; Kerberos matches the SPN as registered and will not.
+    target_host = credential.target(host, port).split("/", 1)[1]
+    try:
+        return spnego.client(
+            username=credential.principal,
+            password=password,
+            hostname=target_host,
+            service=credential.service,
+            protocol=protocol,
+        )
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise AuthenticationError(f"could not initialise a {protocol} security context") from exc
+
+
+def handshake(
+    context: SecurityContext,
+    send_authenticate: Any,
+    max_rounds: int = MAX_ROUNDS,
+) -> None:
+    """Run the token exchange to completion.
+
+    `send_authenticate(token_b64) -> response_xml` performs one round trip. The loop
+    is driven by the security layer reporting completion, exactly as the spec
+    describes, rather than by counting messages.
+    """
+    in_token: bytes | None = None
+    for _ in range(max_rounds):
+        try:
+            out_token = context.step(in_token)
+        except Exception as exc:
+            # Never include the exception's text: it can carry principal and realm.
+            raise AuthenticationError("security context step failed") from exc
+        if context.complete and not out_token:
+            return
+        if out_token is None:
+            raise AuthenticationError("security context produced no token and did not complete")
+        response = send_authenticate(base64.b64encode(out_token).decode("ascii"))
+        if context.complete:
+            return
+        encoded = extract_token(response)
+        in_token = base64.b64decode(encoded) if encoded else None
+    raise AuthenticationError(f"handshake did not complete within {max_rounds} rounds")
