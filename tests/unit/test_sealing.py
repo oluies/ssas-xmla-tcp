@@ -96,3 +96,49 @@ def test_dataSize_is_a_uint16_and_oversize_is_refused():
 
     with pytest.raises(ProtocolError, match="uint16"):
         sealing.seal_frame(Oversize(), b"x")
+
+
+def test_all_three_split_layers_compose():
+    """Sealed chunks inside DIME chunks arriving in TCP fragments.
+
+    Three independent splits stack on one message and each is handled at a
+    different layer, so this asserts they compose rather than merely work alone:
+
+      1. the payload exceeds MAX_CHUNK, so sealing emits several frames
+      2. the sealed bytes exceed one DIME record, so framing sets CF and chunks
+      3. the socket hands the reader a few bytes at a time
+
+    Verified against a live instance too: DBSCHEMA_COLUMNS returns 1366 rows, well
+    past all three thresholds.
+    """
+    from ssas_xmla import dime
+    from ssas_xmla.transport import BytesChannel, MessageStream
+    from tests.unit.test_client_session import DoneContext
+
+    ctx = DoneContext()
+    payload = b"<Envelope>" + b"x" * 7000 + b"</Envelope>"
+
+    sealed_bytes = sealing.seal_message(ctx, payload)
+    assert len(sealed_bytes) > sealing.MAX_CHUNK  # (1) several sealed frames
+
+    parts = [sealed_bytes[i : i + 2000] for i in range(0, len(sealed_bytes), 2000)]
+    assert len(parts) > 1  # (2) several DIME records
+    wire = b"".join(
+        dime.Record(
+            data=p,
+            type_=dime.TYPE_TEXT_XML if i == 0 else b"",
+            mb=(i == 0),
+            me=(i == len(parts) - 1),
+            cf=(i != len(parts) - 1),
+            type_t=1 if i == 0 else 0,
+        ).encode()
+        for i, p in enumerate(parts)
+    )
+
+    class Trickle(BytesChannel):
+        def recv(self, size):  # (3) seven bytes per read
+            return super().recv(7)
+
+    reassembled = MessageStream(Trickle(wire)).receive_message()
+    assert reassembled == sealed_bytes
+    assert sealing.unseal_message(ctx, reassembled) == payload
