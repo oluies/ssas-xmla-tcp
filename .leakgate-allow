@@ -1,0 +1,12 @@
+# Binary files the leak gate cannot scan, reviewed by eye and recorded here.
+#
+# The gate refuses binaries by default because grep -I skips them, so it would
+# otherwise report CLEAN on a file it never read -- which is exactly how a
+# coverage database carrying absolute home-directory paths reached a public repo.
+#
+# Adding a path here is a statement that a human looked at the file. For a UI
+# screenshot that means checking for a hostname or address in a URL bar, a
+# connection panel, a tooltip or a breadcrumb.
+#
+
+# (no reviewed binaries in this repository yet)
