@@ -199,11 +199,51 @@ nothing.
 **Working over NTLM.** Discover, catalog listing and DAX execution all complete against a live
 SQL Server 2022 instance over NTLM, on both a tabular and a multidimensional named instance.
 
-**Kerberos is UNVERIFIED**, and deliberately fails closed rather than quietly. The frame layer
-above was recovered from an NTLM session and carries no field for the *unpadded* plaintext
-length; `spnego` reports zero padding for NTLM and non-zero for the GSS/Kerberos path, so a
-padding mechanism would put padding bytes inside `dataSize` with nothing to strip them by.
-`seal_frame` raises a `ProtocolError` naming the limitation instead of sending a body the
-server will fail to parse for reasons it cannot report usefully. Lifting this needs a
-Kerberos-capable fixture, or the reference client's answer for how it conveys the unpadded
-length.
+**Kerberos is expected to work but is UNVERIFIED against a live server.** The decompile
+settles the part that mattered: dispatch between the two framing styles is decided solely by
+`IsSchannelSspi()`, and Negotiate, Kerberos and NTLM all land in `SecurityMode.Block` — the
+same `WriteInBlockMode`, the same 4-byte header, the same DATA-then-TOKEN order. **The framing
+is mechanism-agnostic.** Three things do differ, and all three are handled:
+
+- **`tokenSize` is not 16.** It is `max(cbSecurityTrailer, cbMaxSignature)` queried at
+  runtime; NTLM happens to give 16 and an AES etype gives substantially more. Nothing here
+  hardcodes it — `seal_frame` writes `len(token)` and `unseal_message` reads the declared
+  size — and `KerberosShapedContext` in the tests pins that with a 60-byte token.
+- **The chunk size differs.** `maxEncryptionBufferSize = min(cbMaxToken, 65535)`, and
+  Kerberos's `cbMaxToken` is far larger than NTLM's 2888 and grows with the PAC. Keeping 2888
+  is correct — smaller chunks are always valid — it just will not byte-match a Kerberos
+  capture.
+- **Padding is the one case that cannot be framed.** ADOMD uses two buffers, DATA and TOKEN;
+  there is no PADDING buffer on this path and no header field for the unpadded length, so
+  padding bytes would sit inside `dataSize` with nothing to strip them by. `seal_frame` raises
+  a `ProtocolError` naming the limitation rather than sending a body the server fails to parse
+  for reasons it cannot report. This is a **runtime guard, not a refusal of Kerberos**: NTLM
+  reports zero padding and the AES etypes are expected to as well.
+
+One thing that is *not* handled by framing at all: `pyspnego`'s plain `wrap()` for Kerberos
+returns a contiguous GSS_Wrap token with the plaintext encrypted inside it under RRC rotation,
+which has no fixed offset to slice at. This library uses `wrap_winrm`, which is the detached
+`wrap_iov` form — header, data, padding — and is the shape the frame needs.
+
+### Verifying Kerberos
+
+Three tiers, in increasing cost, two of which are already in the suite:
+
+| tier | what it proves | cost |
+|---|---|---|
+| Kerberos-shaped fake contexts (`test_sealing.py`) | nothing assumes a 16-byte token; a padding mechanism is refused; the frame shape is identical across mechanisms | free, hermetic |
+| real `pyspnego` client↔server over NTLM (`test_real_spnego_wrap.py`) | the `wrap_winrm` contract itself — ciphertext at plaintext length, detached token, keystream and sequence continuity across chunks | free, hermetic, no KDC |
+| a live Kerberos session | the AES etypes' actual padding and token size | needs a KDC **and a domain** |
+
+The third tier is not merely unwritten, it is not currently possible: the test fixture is a
+**standalone workgroup machine**, so its SSAS can only do NTLM. Real Kerberos verification
+needs either that box promoted to a domain controller, or a run against a domain-joined
+production instance.
+
+The SPN matters more under Kerberos than it appears. NTLM ignores the target, which is why the
+portless `MSOLAPSvc.3/host` this library used to request worked; Kerberos matches the SPN as
+registered. Per `CalculateNTAuthenticationSPN`, the reference client asks for
+`MSOLAPSvc.3/<server>:<port>` (DsMakeSpn is called *with* the port) or
+`MSOLAPSvc.3/<server>:<instance>` for a named instance. `Credential.target()` now produces the
+port form by default, with `instance=` and a full `spn=` override for sites that registered it
+differently.

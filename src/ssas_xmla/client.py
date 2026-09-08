@@ -63,6 +63,12 @@ def _looks_like_xmla(text: str) -> bool:
     return stripped.startswith("<")
 
 
+# DBSCHEMA_CATALOGS.TYPE, as observed on a live SQL Server 2022 pair (2026-09-08):
+# the tabular instance reports "3" and the multidimensional one "0". Two samples, so
+# any other value falls through to "unknown" rather than being guessed at.
+_CATALOG_TYPE = {"0": "multidimensional", "3": "tabular"}
+
+
 def _catalog_kind(row: dict) -> str:
     """Report the model kind only when the server states it.
 
@@ -76,14 +82,22 @@ def _catalog_kind(row: dict) -> str:
     for tabular and faults for multidimensional -- which is a request, not a field,
     and so belongs to the caller rather than to row parsing.
 
-    **CATALOG_TYPE is UNVERIFIED.** Nothing in this repository establishes that a
-    real DBSCHEMA_CATALOGS rowset carries the column: it is not cited in
-    docs/discovery-brief.md and the recorded fixture does not contain it. If the
-    server does not emit it, `kind` is always "unknown" -- which is a documented,
-    honest value here rather than a wrong one, so the code is safe either way; but
-    do not treat a "tabular"/"multidimensional" answer as something this library
-    has been observed to produce. Confirming it needs one live DBSCHEMA_CATALOGS.
+    The column is **TYPE**, not CATALOG_TYPE. An earlier version read CATALOG_TYPE,
+    which no server emits, so `kind` was unconditionally "unknown" -- dead code that
+    looked like a feature. Settled against a live SQL Server 2022 instance
+    (2026-09-08), whose DBSCHEMA_CATALOGS returns:
+
+        CATALOG_NAME, DESCRIPTION, ROLES, DATE_MODIFIED, COMPATIBILITY_LEVEL,
+        TYPE, VERSION, DATABASE_ID, DATE_QUERIED, CURRENTLY_USED, POPULARITY,
+        WEIGHTEDPOPULARITY, CLIENTCACHEREFRESHPOLICY
+
+    with TYPE="3" on the tabular instance and TYPE="0" on the multidimensional one.
+    Those two values are **observations, not documented semantics** -- one instance
+    of each kind -- so anything else still reports "unknown" rather than guessing.
     """
+    numeric = (row.get("TYPE") or "").strip()
+    if numeric in _CATALOG_TYPE:
+        return _CATALOG_TYPE[numeric]
     kind = (row.get("CATALOG_TYPE") or "").strip().lower()
     if kind in ("tabular", "multidimensional"):
         return kind
@@ -183,7 +197,9 @@ class Session:
             chan = channel or SocketChannel(self.target.host, self.target.port, self.target.timeout)
             self._stream = MessageStream(chan)
             self.state = State.NEGOTIATED
-            ctx = context or auth.build_context(self.credential, self.target.host, password)
+            ctx = context or auth.build_context(
+                self.credential, self.target.host, password, self.target.port
+            )
             # Checked here, not at first use. `auth.SecurityContext` needs only
             # `step`/`complete`, so an injected context can satisfy the handshake
             # and then die on the first request with a bare AttributeError --

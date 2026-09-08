@@ -6,6 +6,7 @@ import logging
 import pytest
 
 from ssas_xmla import auth
+from ssas_xmla.auth import Credential
 from ssas_xmla.errors import AuthenticationError, ProtocolError
 from tests.fixtures import synth
 
@@ -209,3 +210,36 @@ def test_negotiate_is_accepted_and_is_not_ntlm(monkeypatch):
     monkeypatch.setattr(spnego, "client", lambda **kw: seen.update(kw) or object())
     build_context(Credential(mechanism="negotiate"), "h")
     assert seen["protocol"] == "negotiate"
+
+
+# --- the SPN ------------------------------------------------------------------
+# NTLM ignores the target, which is why a portless SPN worked all along; Kerberos
+# matches the SPN as registered and will not. Mirrors ADOMD's
+# CalculateNTAuthenticationSPN (XmlaClient.cs:2750).
+
+
+def test_spn_carries_the_port_by_default():
+    """DsMakeSpn is called WITH the port, so the SPN is MSOLAPSvc.3/host:2383 --
+    not the portless form this library used to request."""
+    assert Credential().target("box.example", 2383) == "MSOLAPSvc.3/box.example:2383"
+
+
+def test_a_named_instance_registers_under_the_instance_name():
+    cred = Credential(instance="TAB")
+    assert cred.target("box.example", 2383) == "MSOLAPSvc.3/box.example:TAB"
+
+
+def test_an_explicit_spn_overrides_everything():
+    cred = Credential(instance="TAB", spn="MSOLAPSvc.3/other.example")
+    assert cred.target("box.example", 2383) == "MSOLAPSvc.3/other.example"
+
+
+def test_the_service_class_is_configurable():
+    """SQL Browser uses MSOLAPDisco.3; a site may register another class."""
+    assert Credential(service="MSOLAPDisco.3").target("box.example", 0) == (
+        "MSOLAPDisco.3/box.example:0"
+    )
+
+
+def test_no_port_falls_back_to_the_portless_form():
+    assert Credential().target("box.example") == "MSOLAPSvc.3/box.example"

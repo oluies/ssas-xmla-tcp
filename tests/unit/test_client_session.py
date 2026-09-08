@@ -169,8 +169,9 @@ def test_password_reaches_the_security_layer_and_is_not_retained(monkeypatch):
     server."""
     seen = {}
 
-    def fake_build_context(credential, host, password=None):
+    def fake_build_context(credential, host, password=None, port=None):
         seen["password"] = password
+        seen["host"], seen["port"] = host, port
         return DoneContext()
 
     # monkeypatch, not manual save/restore: an interrupt between the assignment and
@@ -182,6 +183,9 @@ def test_password_reaches_the_security_layer_and_is_not_retained(monkeypatch):
     s = connect("h", 2383, channel=ch, password="s3cret")
 
     assert seen["password"] == "s3cret"
+    # the port reaches build_context, which is what lets it compose the SPN the
+    # reference client uses (MSOLAPSvc.3/host:port -- see Credential.target)
+    assert (seen["host"], seen["port"]) == ("h", 2383)
     # never stored on the session or its credential, so no repr or log can leak it
     assert "s3cret" not in repr(s)
     assert "s3cret" not in repr(s.credential)

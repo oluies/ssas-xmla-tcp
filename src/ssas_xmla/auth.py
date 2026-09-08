@@ -40,11 +40,27 @@ class Credential:
     by logging a Credential.
     """
 
-    mechanism: str = "kerberos"  # or "ntlm"
+    mechanism: str = "kerberos"  # or "ntlm" or "negotiate"
     principal: str | None = None  # None means the ambient identity
     service: str = "MSOLAPSvc.3"
+    instance: str | None = None  # a named instance, if the SPN is registered that way
+    spn: str | None = None  # full override, when neither form below is right
 
-    def target(self, host: str) -> str:
+    def target(self, host: str, port: int | None = None) -> str:
+        """The SPN to request. NTLM ignores it; Kerberos does not.
+
+        Mirrors ADOMD's `CalculateNTAuthenticationSPN`: a named instance registers
+        as ``MSOLAPSvc.3/<server>:<instance>``, and otherwise the SPN carries the
+        **port** -- `DsMakeSpn` is called with it, producing
+        ``MSOLAPSvc.3/<server>:<port>``, not the portless form. Requesting
+        ``MSOLAPSvc.3/<server>`` is the shape NTLM tolerated and Kerberos will not.
+        """
+        if self.spn:
+            return self.spn
+        if self.instance:
+            return f"{self.service}/{host}:{self.instance}"
+        if port is not None:
+            return f"{self.service}/{host}:{port}"
         return f"{self.service}/{host}"
 
 
@@ -67,7 +83,10 @@ def extract_token(response_xml: str) -> str:
 
 
 def build_context(
-    credential: Credential, host: str, password: str | None = None
+    credential: Credential,
+    host: str,
+    password: str | None = None,
+    port: int | None = None,
 ) -> SecurityContext:
     """Create a real SPNEGO context. Imported lazily so parser tests need no pyspnego.
 
@@ -92,11 +111,16 @@ def build_context(
             f"unknown authMechanism {credential.mechanism!r}; expected kerberos, negotiate or ntlm"
         )
     protocol = "ntlm" if mechanism == "ntlm" else mechanism
+    # `hostname` carries the whole host part of the SPN, port included, because
+    # spnego composes it as f"{service}/{hostname}" and the reference client's SPN
+    # is `MSOLAPSvc.3/host:port`. NTLM ignores the target, which is why the portless
+    # form worked; Kerberos matches the SPN as registered and will not.
+    target_host = credential.target(host, port).split("/", 1)[1]
     try:
         return spnego.client(
             username=credential.principal,
             password=password,
-            hostname=host,
+            hostname=target_host,
             service=credential.service,
             protocol=protocol,
         )

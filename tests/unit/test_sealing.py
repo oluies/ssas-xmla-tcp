@@ -199,3 +199,85 @@ def test_a_short_sealed_body_inside_a_complete_dime_message_is_not_silent(short_
     assert reassembled == truncated  # layers 2 and 3 delivered exactly what was sent
     with pytest.raises(IncompleteMessage):
         sealing.unseal_message(ctx, reassembled)
+
+
+# --- Kerberos-shaped contexts -------------------------------------------------
+# The decompile settles that the FRAMING is mechanism-agnostic: dispatch between
+# the two styles is decided solely by IsSchannelSspi(), and Negotiate, Kerberos and
+# NTLM all land in SecurityMode.Block -- same WriteInBlockMode, same 4-byte header,
+# same DATA-then-TOKEN order. What differs is the CONTEXT, in three ways, and each
+# is mocked here because no KDC is reachable from the hermetic suite.
+
+
+class KerberosShapedContext:
+    """A context with a Kerberos-sized token and no padding.
+
+    tokenSize is a runtime value (max(cbSecurityTrailer, cbMaxSignature)), not the
+    constant 16 that NTLM happens to produce. An AES etype's is substantially
+    larger, so anything that hardcoded 16 as a header value or a split offset
+    breaks here and nowhere else.
+    """
+
+    TOKEN = b"\x05\x04" + b"\xbe" * 58  # 60 bytes, RFC 4121 wrap-token shaped
+
+    def wrap_winrm(self, data):
+        return self.TOKEN, bytes(b ^ 0x33 for b in data), 0
+
+    def unwrap_winrm(self, header, data):
+        assert header == self.TOKEN
+        return bytes(b ^ 0x33 for b in data)
+
+
+def test_a_kerberos_sized_token_round_trips():
+    """Nothing may assume a 16-byte token: the header declares tokenSize and the
+    reader must honour it."""
+    ctx = KerberosShapedContext()
+    payload = b"<Envelope>" + b"k" * 6000 + b"</Envelope>"
+    message = sealing.seal_message(ctx, payload)
+    data_size, token_size = struct.unpack_from("<HH", message, 0)
+    assert (data_size, token_size) == (len(sealing.BOM), 60)
+    assert sealing.unseal_message(ctx, message) == payload
+
+
+def test_a_kerberos_sized_token_survives_chunking():
+    """Each chunk carries its own token, so a larger token changes every frame's
+    arithmetic, not just the first."""
+    ctx = KerberosShapedContext()
+    payload = b"z" * (sealing.MAX_CHUNK * 2 + 100)
+    message = sealing.seal_message(ctx, payload)
+    assert _frame_count(message) == 4  # BOM + three body chunks
+    assert sealing.unseal_message(ctx, message) == payload
+
+
+def test_a_padding_mechanism_is_the_one_case_that_cannot_be_framed():
+    """ADOMD uses TWO buffers, DATA and TOKEN -- there is no PADDING buffer on this
+    path and no header field for the unpadded length. So padding has nowhere to go.
+    NTLM reports 0 and the AES etypes are expected to as well, which is why this is
+    a runtime guard rather than a refusal of Kerberos outright."""
+
+    class Padding(KerberosShapedContext):
+        def wrap_winrm(self, data):
+            return self.TOKEN, bytes(b ^ 0x33 for b in data) + b"\x00" * 4, 4
+
+    with pytest.raises(ProtocolError, match="padded the plaintext by 4"):
+        sealing.seal_frame(Padding(), b"x")
+
+
+def test_framing_is_identical_across_mechanisms():
+    """The claim the decompile actually makes: same header, same order, same code
+    path -- only the token length differs. Asserting it here means a future change
+    that special-cases a mechanism in the frame layer fails a test."""
+    payload = b"<Envelope>identical</Envelope>"
+    ntlm = sealing.seal_message(FakeContext(), payload)
+    krb = sealing.seal_message(KerberosShapedContext(), payload)
+
+    def shape(msg):
+        out, off = [], 0
+        while off + 4 <= len(msg):
+            ds, ts = struct.unpack_from("<HH", msg, off)
+            out.append(ds)  # ciphertext lengths, which are plaintext lengths
+            off += 4 + ds + ts
+        return out
+
+    assert shape(ntlm) == shape(krb)
+    assert _frame_count(ntlm) == _frame_count(krb)
