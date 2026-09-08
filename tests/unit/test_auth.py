@@ -137,3 +137,59 @@ def test_fault_on_the_terminal_authenticate_round_is_not_dropped():
     with pytest.raises(AuthenticationError, match="refused"):
         connect("h", 2383, channel=ch, context=DoneContext())
     del dime
+
+
+# --- build_context: the bridge to pyspnego ------------------------------------
+
+
+def test_build_context_passes_the_right_arguments(monkeypatch):
+    """Kerberos and NTLM differ only by protocol; everything else is shared, which
+    is why one handshake loop serves both."""
+    import spnego
+
+    from ssas_xmla.auth import Credential, build_context
+
+    seen = {}
+
+    def fake_client(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(spnego, "client", fake_client)
+    cred = Credential(mechanism="ntlm", principal="svc", service="MSOLAPSvc.3")
+    build_context(cred, "host.example", password="pw")
+    assert seen["protocol"] == "ntlm"
+    assert seen["username"] == "svc"
+    assert seen["password"] == "pw"
+    assert seen["hostname"] == "host.example"
+    assert seen["service"] == "MSOLAPSvc.3"
+
+
+def test_build_context_selects_kerberos_for_ticket_mechanisms(monkeypatch):
+    import spnego
+
+    from ssas_xmla.auth import Credential, build_context
+
+    seen = {}
+    monkeypatch.setattr(spnego, "client", lambda **kw: seen.update(kw) or object())
+    build_context(Credential(mechanism="KERBEROS"), "h")
+    assert seen["protocol"] == "kerberos"
+    assert seen["password"] is None  # ambient identity; nothing to pass
+
+
+def test_build_context_failure_does_not_leak_the_underlying_message(monkeypatch):
+    """A spnego failure can name the principal and realm."""
+    import spnego
+
+    from ssas_xmla.auth import Credential, build_context
+    from ssas_xmla.errors import AuthenticationError
+
+    def boom(**kwargs):
+        raise ValueError("no credentials for reader@CORP.EXAMPLE.COM")
+
+    monkeypatch.setattr(spnego, "client", boom)
+    with pytest.raises(AuthenticationError) as excinfo:
+        build_context(Credential(mechanism="kerberos", principal="reader"), "h")
+    message = str(excinfo.value)
+    assert "CORP.EXAMPLE.COM" not in message
+    assert "kerberos" in message

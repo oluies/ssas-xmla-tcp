@@ -55,7 +55,7 @@ branch = true
 # The floor is a ratchet, not a target. It exists so a future change cannot
 # quietly delete coverage; raise it when the real number rises, never lower it
 # to make a red build green.
-fail_under = 90
+fail_under = 95
 show_missing = true
 skip_covered = true
 exclude_lines = [
