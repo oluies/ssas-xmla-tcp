@@ -9,3 +9,7 @@ dist/
 *.egg-info/
 # roborev snapshots
 /.roborev/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

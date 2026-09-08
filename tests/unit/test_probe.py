@@ -79,21 +79,43 @@ def test_each_failure_category_has_its_own_exit_code(patched_connect, capsys, er
     assert phrase in capsys.readouterr().err
 
 
-def test_the_exit_codes_are_all_distinct():
-    """A script has to tell the categories apart; overlapping codes would defeat
-    the whole point of having separate error types."""
-    codes = set()
-    for err, expected in (
-        (ConnectionError("x"), 2),
-        (AuthenticationError("x"), 3),
-        (NegotiationError("x"), 4),
-        (AuthorizationError("x"), 5),
-        (ServerError("x"), 6),
+def test_the_exit_codes_are_all_distinct(patched_connect, monkeypatch):
+    """A script has to tell the categories apart, so no two may share a code.
+
+    Earlier this asserted len({2,3,4,5,6}) == 5 -- true by construction, and it
+    would have passed even if probe.main returned 3 for two different errors. It
+    now runs probe for each category and collects what it actually returns.
+    """
+    observed = {}
+    for error in (
+        ConnectionError("x"),
+        AuthenticationError("x"),
+        NegotiationError("x"),
+        AuthorizationError("x"),
+        ServerError("x"),
     ):
-        codes.add(expected)
-        del err
-    assert len(codes) == 5
-    assert 0 not in codes  # success must be unambiguous
+        patched_connect(error)
+        observed[type(error).__name__] = probe.main(ARGS)
+    assert len(set(observed.values())) == len(observed), observed
+    assert 0 not in observed.values()  # success must stay unambiguous
+
+
+def test_a_failure_raised_by_the_request_is_also_categorised(patched_connect, capsys):
+    """Every other failure test raises from `connect`. This one connects fine and
+    fails on the request, which is a different code path through probe.main."""
+    patched_connect(_FakeSession(raises=AuthorizationError("no read permission")))
+    assert probe.main(ARGS) == 5
+    assert "AUTHORIZATION REFUSED" in capsys.readouterr().err
+
+
+def test_an_unexpected_ssas_error_still_exits_nonzero(patched_connect, capsys):
+    """The `except SsasError` catch-all was untested; without it an unmapped
+    error would traceback instead of reporting."""
+    from ssas_xmla.errors import ProtocolError
+
+    patched_connect(_FakeSession(raises=ProtocolError("malformed record")))
+    assert probe.main(ARGS) == 1
+    assert "FAILED" in capsys.readouterr().err
 
 
 def test_negotiation_failure_points_at_the_scope_decision(patched_connect, capsys):
@@ -124,7 +146,13 @@ def test_password_comes_from_the_environment_not_argv(monkeypatch, patched_conne
     monkeypatch.setenv("SSAS_PASSWORD", "from-env")
     probe.main(ARGS)
     assert seen["password"] == "from-env"
-    assert "--password" not in " ".join(ARGS)
+
+
+def test_there_is_no_password_flag_to_reintroduce():
+    """The invariant worth pinning is the parser's shape, not that one local
+    constant happens to omit a flag."""
+    with pytest.raises(SystemExit):
+        probe.main(ARGS + ["--password", "s3cret"])
 
 
 def test_mechanism_choices_are_constrained():

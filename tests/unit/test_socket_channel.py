@@ -66,12 +66,11 @@ def fake_connect(monkeypatch):
 def test_connects_to_the_given_address_and_applies_the_timeout(fake_connect):
     sock = FakeSocket()
     created = fake_connect(sock=sock)
-    channel = SocketChannel(HOST, PORT, 12.5)
+    SocketChannel(HOST, PORT, 12.5)
     assert created.address == (HOST, PORT)
     assert created.timeout == 12.5
     # FR-009: applied to the socket too, not only to connect
     assert sock.timeout_set == 12.5
-    assert channel is not None
 
 
 def test_connect_failure_maps_to_connection_error_without_naming_the_host(fake_connect):
@@ -132,10 +131,24 @@ def test_close_never_raises(fake_connect):
     SocketChannel(HOST, PORT, 5.0).close()  # no exception
 
 
-def test_no_real_socket_is_created_by_these_tests():
-    """Guard: if the injection ever stops working, this suite would start opening
-    real connections. pytest-socket blocks that, and this asserts it stays blocked."""
-    from pytest_socket import SocketBlockedError
+def test_the_injection_is_what_prevents_a_real_connection(fake_connect):
+    """Guard on THIS module's mechanism, not on pytest-socket.
 
-    with pytest.raises(SocketBlockedError):
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    The previous version duplicated test_offline_gate and asserted a third-party
+    invariant, so it would have passed unchanged even if `fake_connect` stopped
+    patching anything. This follows the injected socket through: the fake records
+    the address it was asked for and the bytes written to it, which can only
+    happen if SocketChannel is talking to the fake and not to a real socket.
+    (Asserting the unpatched case here is impossible -- monkeypatch is still
+    active inside the test; test_offline_gate covers that.)
+    """
+    sock = FakeSocket()
+    created = fake_connect(sock=sock)
+    channel = SocketChannel(HOST, PORT, 1.0)
+
+    # the fake was reached, so the patch is genuinely in the path
+    assert created.address == (HOST, PORT)
+    assert created.timeout == 1.0
+    # and the object under test is wired to it, not to a real socket
+    channel.send(b"probe")
+    assert bytes(sock.sent) == b"probe"

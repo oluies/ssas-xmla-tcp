@@ -149,7 +149,7 @@ def test_build_context_passes_the_right_arguments(monkeypatch):
 
     from ssas_xmla.auth import Credential, build_context
 
-    seen = {}
+    seen: dict = {}
 
     def fake_client(**kwargs):
         seen.update(kwargs)
@@ -193,3 +193,24 @@ def test_build_context_failure_does_not_leak_the_underlying_message(monkeypatch)
     message = str(excinfo.value)
     assert "CORP.EXAMPLE.COM" not in message
     assert "kerberos" in message
+
+
+def test_an_unknown_mechanism_is_rejected_not_coerced_to_ntlm():
+    """Credential is public API and integration config feeds it straight from
+    $SSAS_MECHANISM, so a typo used to authenticate as NTLM without a word."""
+    from ssas_xmla.auth import Credential, build_context
+    from ssas_xmla.errors import AuthenticationError
+
+    with pytest.raises(AuthenticationError, match="unknown authMechanism"):
+        build_context(Credential(mechanism="kerbros"), "host")
+
+
+def test_negotiate_is_accepted_and_is_not_ntlm(monkeypatch):
+    import spnego
+
+    from ssas_xmla.auth import Credential, build_context
+
+    seen = {}
+    monkeypatch.setattr(spnego, "client", lambda **kw: seen.update(kw) or object())
+    build_context(Credential(mechanism="negotiate"), "h")
+    assert seen["protocol"] == "negotiate"

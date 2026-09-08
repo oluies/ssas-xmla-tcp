@@ -82,7 +82,16 @@ def build_context(
             "pyspnego is required for authentication: pip install pyspnego"
         ) from exc
 
-    protocol = "kerberos" if credential.mechanism.lower() == "kerberos" else "ntlm"
+    mechanism = credential.mechanism.lower()
+    # Reject rather than silently coerce. Credential is public API and the
+    # integration config feeds it straight from $SSAS_MECHANISM, so a typo used to
+    # become NTLM without a word -- authenticating with a mechanism the caller did
+    # not ask for.
+    if mechanism not in ("kerberos", "negotiate", "ntlm"):
+        raise AuthenticationError(
+            f"unknown authMechanism {credential.mechanism!r}; expected kerberos, negotiate or ntlm"
+        )
+    protocol = "ntlm" if mechanism == "ntlm" else mechanism
     try:
         return spnego.client(
             username=credential.principal,

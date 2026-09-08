@@ -58,6 +58,9 @@ branch = true
 fail_under = 95
 show_missing = true
 skip_covered = true
+# NOTE: exclude_lines REPLACES coverage's built-in list rather than extending it,
+# so "pragma: no cover" must stay first -- dropping it silently disables every
+# pragma in the tree.
 exclude_lines = [
   "pragma: no cover",
   "if TYPE_CHECKING:",
