@@ -314,3 +314,39 @@ sealed bytes, and compare against a real client's for the same request). If our 
 differs structurally from theirs for identical plaintext, the problem is sealing; if it
 matches, the problem is framing. That distinction is what nine guesses have failed to
 establish, and one experiment would.
+
+## The sealing/framing question is ANSWERED: sealing is correct (2026-09-08)
+
+The stop rule asked one question -- *is our ciphertext structurally different from a real
+client's, or does it match?* -- because nine guesses had failed to establish which. Ran the
+experiment: authenticate our own session, seal the same plaintext, compare against the
+captured real client's first sealed message.
+
+    ours: 01 00 00 00 ff c1 01 ef 80 c9 ca d9 | 00 00 00 00     seqnum 0
+    real: 01 00 00 00 5e ee 17 03 e1 e3 3b 51 | 01 00 00 00     seqnum 1
+
+**Structurally identical.** Same 16-byte length, same NTLM layout: version `01 00 00 00`,
+8-byte checksum, 4-byte sequence number. `pyspnego.wrap_winrm()` produces exactly the shape
+the server produces.
+
+**So the problem is NOT sealing, and never was.** Every hypothesis about confidentiality
+flags, wrapping mode and key material was aimed at the wrong layer. What differs is:
+
+1. **The sequence number.** Ours starts at 0; the real client's first sealed message carries
+   1, so its counter advanced once during authentication. Advancing ours by a throwaway wrap
+   did not by itself make the exchange succeed, so this is necessary-but-not-sufficient.
+2. **The three bytes at offsets 4-6**, between the constant `03 00 10 00` and the signature.
+   These remain the one genuinely unexplained element, and with sealing eliminated they are
+   now the *only* candidate.
+
+**What this narrows it to.** The message is `[4-byte constant][3 bytes ???][16-byte NTLM
+signature][ciphertext]`. Three is not a natural width for a length or a flag field, which
+argues the four-byte prefix is not a header in the way it looks -- more likely the whole
+leading region is a structure being read wrongly, e.g. a buffer-descriptor list where the
+field boundaries fall differently.
+
+**Do not resume by guessing layouts; nine attempts is enough evidence that it does not work.**
+The decisive next move is to obtain the real client's *plaintext* for a known request -- by
+capturing a real session while also holding its session key, so its ciphertext can be
+decrypted and the wrapper read directly rather than inferred. Failing that, MS-SSAS's own
+Appendix A (product behaviour) is the only remaining documentary source not yet consulted.
