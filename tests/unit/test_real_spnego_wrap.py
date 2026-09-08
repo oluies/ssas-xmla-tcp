@@ -44,8 +44,15 @@ def negotiated_pair(tmp_path, monkeypatch):
         options=spnego.NegotiateOptions.use_ntlm,
     )
     server = spnego.server(protocol="ntlm", options=spnego.NegotiateOptions.use_ntlm)
+    # Bounded, like auth.MAX_ROUNDS. An unbounded loop turns a pyspnego build that
+    # keeps emitting tokens into a CI timeout with no attribution, rather than a
+    # test failure that names itself.
+    from ssas_xmla import auth
+
     token = client.step()
-    while not (client.complete and server.complete):
+    for _ in range(auth.MAX_ROUNDS):
+        if client.complete and server.complete:
+            break
         token = server.step(token)
         if token is None:
             break

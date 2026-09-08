@@ -146,8 +146,16 @@ class MessageStream:
             return None
         try:
             # The bytearray goes in as-is: struct.unpack_from and slicing both take
-            # one. Copying it per read made assembling a large rowset quadratic in
-            # the response size, since _try_parse runs on every 64 KiB chunk.
+            # one, so this removes the whole-buffer copy that ran on every 64 KiB
+            # read.
+            #
+            # It does NOT make reassembly linear, and an earlier version of this
+            # comment claimed it did. `decode_message_at` still walks every record
+            # from offset 0 on each attempt, and `decode_record` copies each field
+            # (`bytes(buf[pos:end])`), so a large response is still O(n^2) in the
+            # number of reads -- one of two copies removed, the constant halved.
+            # Making it linear needs a completeness pre-check that skips the decode
+            # until the message can finish; not done here.
             payload, content_type, options, next_offset = dime.decode_message_at(self._buf, 0)
         except IncompleteMessage:
             # Not enough bytes yet. Every other ProtocolError is malformed input

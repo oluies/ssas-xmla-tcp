@@ -84,8 +84,11 @@ def _catalog_kind(row: dict) -> str:
 
     The column is **TYPE**, not CATALOG_TYPE. An earlier version read CATALOG_TYPE,
     which no server emits, so `kind` was unconditionally "unknown" -- dead code that
-    looked like a feature. Settled against a live SQL Server 2022 instance
-    (2026-09-08), whose DBSCHEMA_CATALOGS returns:
+    looked like a feature. The CATALOG_TYPE branch is gone entirely rather than kept
+    as a fallback: it is unreachable against any real server and accepts a value
+    shape ("tabular") the real column never produces, which is the same
+    dead-code-shaped-as-feature it replaced. Settled against a live SQL Server 2022
+    instance (2026-09-08), whose DBSCHEMA_CATALOGS returns:
 
         CATALOG_NAME, DESCRIPTION, ROLES, DATE_MODIFIED, COMPATIBILITY_LEVEL,
         TYPE, VERSION, DATABASE_ID, DATE_QUERIED, CURRENTLY_USED, POPULARITY,
@@ -96,12 +99,7 @@ def _catalog_kind(row: dict) -> str:
     of each kind -- so anything else still reports "unknown" rather than guessing.
     """
     numeric = (row.get("TYPE") or "").strip()
-    if numeric in _CATALOG_TYPE:
-        return _CATALOG_TYPE[numeric]
-    kind = (row.get("CATALOG_TYPE") or "").strip().lower()
-    if kind in ("tabular", "multidimensional"):
-        return kind
-    return "unknown"
+    return _CATALOG_TYPE.get(numeric, "unknown")
 
 
 class State(Enum):
@@ -186,6 +184,12 @@ class Session:
         # already set and a SessionId from the dead connection -- and wrong
         # negotiation bits are silently fatal: the server closes the connection
         # with no error and logs nothing.
+        # Close first. Overwriting _stream leaked the old socket for the life of
+        # the process -- and against a real SocketChannel the server-side session
+        # stayed open too. That is precisely the reconnect this reset exists for,
+        # so the leak sat in the one path the block was written to support.
+        if self._stream is not None:
+            self.close()
         self._first_record = True
         self._context = None
         self._session_id = None

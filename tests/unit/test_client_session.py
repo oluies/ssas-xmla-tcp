@@ -324,3 +324,19 @@ def test_a_large_chunked_sealed_rowset_arrives_whole_through_the_session():
     assert len(catalogs) == 400
     assert catalogs[0].name == "C0000"
     assert catalogs[-1].name == "C0399"
+
+
+def test_reopening_without_closing_does_not_leak_the_previous_stream():
+    """The reset block exists to make open() safe to call again, but it overwrote
+    _stream without closing it -- leaking the socket for the life of the process,
+    and against a real SocketChannel leaving the server-side session open too. The
+    companion test above calls close() between opens, so it could not catch this."""
+    s = Session(target=ConnectionTarget("h", 2383), credential=Credential())
+    first = _channel_for(synth.AUTHENTICATE_RESPONSE.format(token=""))
+    s.open(channel=first, context=DoneContext())
+    assert not first.closed
+
+    second = _channel_for(synth.AUTHENTICATE_RESPONSE.format(token=""))
+    s.open(channel=second, context=DoneContext())  # no close() in between
+    assert first.closed, "the previous channel was abandoned, not closed"
+    assert not second.closed
