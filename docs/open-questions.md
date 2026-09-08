@@ -417,3 +417,38 @@ Discover, and **identifying that message is now the sharpest question in this do
 Next, per the suggested order: **Wireshark NTLMSSP decryption with the account password**
 (question 9) — it reads the wrapper and the plaintext directly and needs nothing on the box —
 then the ADOMD.NET decompile (A).
+
+## Test 3 (question 9) — NTLM decryption is NOT viable on a single host
+
+Attempted the Wireshark/NTLM-decryption route. It fails for a structural reason worth
+recording, because it is not obvious and will otherwise be attempted again.
+
+**The tokens are SPNEGO-wrapped, not raw NTLMSSP.** They are base64 inside `<SspiHandshake>`
+inside SOAP inside DIME, and the base64 decodes to an ASN.1 GSS-API token
+(`60 6c 06 06 2b 06 01 05 05 02` = SPNEGO OID) with the NTLMSSP message nested inside. So
+Wireshark never recognises them as NTLMSSP and never offers to decrypt, whatever preference is
+set. Unwrapping by hand is easy — search for `NTLMSSP\0` — and that part works.
+
+**The blocker is the authentication itself.** The only ADOMD.NET available is on the same
+machine as the instance, so Windows uses its same-machine shortcut. The AUTHENTICATE message
+is 108 bytes with **no user, no domain, no NTLMv2 response and no encrypted session key**:
+
+    AUTHENTICATE 108B  user=None domain=None  nt_response=0B  enc_key=0B
+
+Without an NTLMv2 response there is no `SessionBaseKey` to derive, so **no session key can be
+recovered from the wire** and the sealed payload cannot be decrypted. Tried:
+
+| attempt | result |
+|---|---|
+| connecting to `localhost` | local shortcut, no derivable key |
+| explicit credentials in the connection string | **ADOMD over native TCP does integrated auth only** — refused outright; explicit credentials are an HTTP-binding feature |
+| connecting via the host's own public IP instead of loopback | still the local shortcut |
+
+**What would make it viable:** ADOMD.NET on a *second* Windows machine, so the exchange is a
+genuine network logon. Then the capture carries a real NTLMv2 response, the key derives, and
+the wrapper and plaintext can be read directly. Everything else needed is already written and
+working — SPNEGO unwrapping, `Authenticate.unpack`, and the `pyspnego` key-derivation
+primitives (`md4`, `hmac_md5`, `rc4k`, `sealkey`).
+
+**Consequence:** with one Windows host, question 9 is unavailable and **the ADOMD.NET
+decompile (section A) is now the best remaining route** — and it needs no server at all.
