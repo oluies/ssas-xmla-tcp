@@ -40,7 +40,7 @@ jobs:
         run: >
           uv run --no-project --python ${{ matrix.python-version }}
           --with-editable ".[dev]"
-          pytest
+          pytest --cov --cov-report=term-missing
 
   dependency-surface:
     name: runtime deps are pyspnego + stdlib only

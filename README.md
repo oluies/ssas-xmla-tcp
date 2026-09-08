@@ -15,8 +15,18 @@ for the citations behind each layer. Claims not yet backed by a recorded fixture
 
 ## Status
 
-Milestone 1 (the offline stack: framing, transport, authentication, one metadata request) is
-under construction. See [`specs/001-ssas-xmla-tcp/`](specs/001-ssas-xmla-tcp/).
+**Partly working against a live instance.** Framing, content-type negotiation and the
+GSS-API/SPNEGO handshake are confirmed end to end; the authentication handshake completes
+against a real SQL Server 2022 Analysis Services instance.
+
+**The remaining blocker:** every message *after* the handshake is GSS-sealed, and reproducing
+that sealing is unfinished. The DIME TYPE field stays `text/xml` even once the payload is
+ciphertext, which is what made this hard to spot. `docs/discovery-brief.md` records what has
+been measured, what has been ruled out (nine distinct attempts), and what to try next.
+
+So: the protocol stack is real and tested, but you cannot yet read metadata over TCP with it.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the layers fit together and
+[`specs/001-ssas-xmla-tcp/`](specs/001-ssas-xmla-tcp/) for the spec, plan and task breakdown.
 
 ## Requirements
 
@@ -51,11 +61,27 @@ Every outcome is informative:
 ## Tests
 
 ```bash
-pytest
+pytest                              # offline suite, sockets disabled
+pytest --cov --cov-report=term-missing   # with coverage (floor: 90%)
+./tests/hooks/test_leak_gate.sh     # the commit gate's boundary cases
 ```
 
-Sockets are disabled by default. The suite must pass on a machine that has never contacted an
-Analysis Services instance; anything needing a live server is marked `integration` and excluded.
+Sockets are disabled by default and the suite must pass on a machine that has never contacted
+an Analysis Services instance. Anything needing a live server is marked `integration`, is
+skipped unless `SSAS_HOST` and friends are set, and is granted socket access explicitly.
+
+To run the integration tests against a real instance:
+
+```bash
+export SSAS_HOST=... SSAS_PORT=...        # the instance's PINNED port
+export SSAS_MECHANISM=ntlm SSAS_PRINCIPAL=...
+export SSAS_PASSWORD=...                  # standalone servers only; never on the command line
+pytest -m integration
+```
+
+CI runs four jobs: lint (`ruff check` + `format --check`), the offline suite under coverage on
+Python 3.10–3.13, a dependency-surface job asserting the runtime dependency set is exactly
+`pyspnego`, and a leak gate that scans every tracked file for identifying tokens.
 
 ## Two rules that are not negotiable
 
