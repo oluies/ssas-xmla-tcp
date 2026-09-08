@@ -110,12 +110,49 @@ def test_a_failure_raised_by_the_request_is_also_categorised(patched_connect, ca
 
 def test_an_unexpected_ssas_error_still_exits_nonzero(patched_connect, capsys):
     """The `except SsasError` catch-all was untested; without it an unmapped
-    error would traceback instead of reporting."""
+    error would traceback instead of reporting. Uses the base class deliberately:
+    ProtocolError now has its own handler, so it no longer exercises the fallback."""
+    from ssas_xmla.errors import SsasError
+
+    patched_connect(_FakeSession(raises=SsasError("something unmapped")))
+    assert probe.main(ARGS) == 1
+    assert "FAILED" in capsys.readouterr().err
+
+
+def test_a_protocol_error_is_its_own_outcome(patched_connect, capsys):
     from ssas_xmla.errors import ProtocolError
 
     patched_connect(_FakeSession(raises=ProtocolError("malformed record")))
-    assert probe.main(ARGS) == 1
-    assert "FAILED" in capsys.readouterr().err
+    assert probe.main(ARGS) == 7
+    assert "PROTOCOL ERROR" in capsys.readouterr().err
+
+
+def test_a_padding_mechanism_is_reported_with_the_fix(patched_connect, capsys):
+    """Kerberos is the default, and a padding mechanism cannot be framed at all --
+    so the out-of-the-box run used to die with a generic FAILED after a SUCCESSFUL
+    handshake, for a configuration the library already knew it could not support."""
+    from ssas_xmla.errors import ProtocolError
+
+    patched_connect(
+        _FakeSession(
+            raises=ProtocolError("the negotiated mechanism padded the plaintext by 4 bytes")
+        )
+    )
+    assert probe.main(ARGS) == 7
+    err = capsys.readouterr().err
+    assert "--mechanism ntlm" in err
+
+
+def test_the_authentication_hint_names_the_spn_that_was_requested(patched_connect, capsys):
+    """ "Check ticket or keytab" pointed at the wrong cause when the real problem
+    was an SPN that did not match how the instance is registered."""
+    from ssas_xmla.errors import AuthenticationError
+
+    patched_connect(_FakeSession(raises=AuthenticationError("refused")))
+    assert probe.main(ARGS) == 3
+    err = capsys.readouterr().err
+    assert "MSOLAPSvc.3/" in err
+    assert "--instance" in err and "--spn" in err
 
 
 def test_negotiation_failure_points_at_the_scope_decision(patched_connect, capsys):

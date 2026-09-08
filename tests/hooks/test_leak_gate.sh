@@ -93,4 +93,37 @@ check_file "path alone does NOT allowlist" 'printf "a\000b" > case.bin' BLOCK \
 check_file "stale digest re-arms the gate" 'printf "a\000c" > case.bin' BLOCK \
            "$GOOD  case.bin"
 
+# The explicit-LEAK_GATE_FILES_CMD guard, which CI depends on
+# (.github/workflows/ci.yml) and whose failure mode is "green while checking zero
+# files". It had no case, so neither half was pinned.
+verdict_raw() {  # 1=name 2=env-command 3=want
+  if LEAK_GATE_FILES_CMD="$2" "$HOOK" >/dev/null 2>&1; then got=PASS; else got=BLOCK; fi
+  if [ "$got" = "$3" ]; then printf '  ok   %-40s %s\n' "$1" "$got"
+  else printf '  FAIL %-40s got=%s want=%s\n' "$1" "$got" "$3"; fail=1; fi
+}
+verdict_raw "explicit cmd scanning nothing"  "true"        BLOCK
+printf 'nothing identifying here\n' > case.txt
+verdict_raw "explicit cmd with a real file"  "echo case.txt" PASS
+rm -f case.txt
+
+# A message-only --amend stages nothing; the DEFAULT path must still pass, or the
+# guard becomes a false refusal on every such commit.
+rm -f case.txt .leakgate-allow; git rm -q --cached -r . >/dev/null 2>&1 || true
+if "$HOOK" >/dev/null 2>&1; then printf '  ok   %-40s %s\n' "default path, empty index" PASS
+else printf '  FAIL %-40s got=BLOCK want=PASS\n' "default path, empty index"; fail=1; fi
+
+# A refused binary must report as a LEAK, not as an empty file list -- the message
+# order matters because the last line is the one the operator acts on.
+printf 'a\000b' > case.bin
+# Captured, not piped: `set -o pipefail` above makes `hook | grep` return the
+# HOOK's exit status, so a piped test reports failure precisely when the hook
+# correctly blocks.
+out=$(LEAK_GATE_FILES_CMD='echo case.bin' "$HOOK" 2>&1 || true)
+if printf '%s' "$out" | grep -q "COMMIT BLOCKED"; then
+  printf '  ok   %-40s %s\n' "refused binary reports as a leak" BLOCK
+else
+  printf '  FAIL %-40s (reported an empty file list)\n' "refused binary reports as a leak"; fail=1
+fi
+git rm -q --cached -r . >/dev/null 2>&1 || true; rm -f case.bin
+
 exit "$fail"

@@ -35,26 +35,55 @@ def test_compatibility_level_alone_does_not_decide_the_kind():
     assert by_name["AWMultidim"].kind == "unknown"
 
 
-def test_kind_is_reported_when_the_server_states_it():
-    """IF the server states CATALOG_TYPE, both values map through.
-
-    This pins the mapping, not the column's existence: the body below is written by
-    hand precisely because no recorded fixture contains CATALOG_TYPE, and whether a
-    real DBSCHEMA_CATALOGS emits it is UNVERIFIED (see `_catalog_kind`). The
-    companion test above is the one that covers what has actually been observed --
-    a rowset without the column, reporting "unknown"."""
-    body = (
+def _catalogs_body(rows: str) -> str:
+    return (
         '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
         '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis"><return>'
         '<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">'
-        "<row><CATALOG_NAME>T</CATALOG_NAME><CATALOG_TYPE>Tabular</CATALOG_TYPE></row>"
-        "<row><CATALOG_NAME>M</CATALOG_NAME>"
-        "<CATALOG_TYPE>Multidimensional</CATALOG_TYPE></row>"
+        f"{rows}"
         "</root></return></DiscoverResponse></Body></Envelope>"
     )
+
+
+def test_kind_comes_from_the_TYPE_column():
+    """The behaviour change itself, which previously had no test.
+
+    A live SQL Server 2022 pair reports TYPE="3" on the tabular instance and "0" on
+    the multidimensional one; there is no CATALOG_TYPE column at all. Without this,
+    inverting the mapping or dropping the .strip() would go green.
+    """
+    body = _catalogs_body(
+        "<row><CATALOG_NAME>T</CATALOG_NAME><TYPE>3</TYPE></row>"
+        "<row><CATALOG_NAME>M</CATALOG_NAME><TYPE>0</TYPE></row>"
+    )
     s, _ = _session(body)
-    by_name = {c.name: c.kind for c in s.catalogs()}
-    assert by_name == {"T": "tabular", "M": "multidimensional"}
+    assert {c.name: c.kind for c in s.catalogs()} == {
+        "T": "tabular",
+        "M": "multidimensional",
+    }
+
+
+def test_an_unmapped_TYPE_is_unknown_rather_than_guessed():
+    """Two values were observed, one instance of each kind -- that is not the
+    documented domain, so anything else must not be inferred."""
+    s, _ = _session(_catalogs_body("<row><CATALOG_NAME>X</CATALOG_NAME><TYPE>7</TYPE></row>"))
+    assert [c.kind for c in s.catalogs()] == ["unknown"]
+
+
+def test_TYPE_is_stripped_before_lookup():
+    s, _ = _session(_catalogs_body("<row><CATALOG_NAME>T</CATALOG_NAME><TYPE> 3 </TYPE></row>"))
+    assert [c.kind for c in s.catalogs()] == ["tabular"]
+
+
+def test_the_legacy_CATALOG_TYPE_column_is_no_longer_consulted():
+    """It is gone rather than kept as a fallback: no server emits it, and it
+    accepted a value shape ("tabular") the real column never produces."""
+    s, _ = _session(
+        _catalogs_body(
+            "<row><CATALOG_NAME>T</CATALOG_NAME><CATALOG_TYPE>Tabular</CATALOG_TYPE></row>"
+        )
+    )
+    assert [c.kind for c in s.catalogs()] == ["unknown"]
 
 
 def test_session_id_is_captured_and_reused():

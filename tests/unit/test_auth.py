@@ -218,10 +218,17 @@ def test_negotiate_is_accepted_and_is_not_ntlm(monkeypatch):
 # CalculateNTAuthenticationSPN (XmlaClient.cs:2750).
 
 
-def test_spn_carries_the_port_by_default():
-    """DsMakeSpn is called WITH the port, so the SPN is MSOLAPSvc.3/host:2383 --
-    not the portless form this library used to request."""
-    assert Credential().target("box.example", 2383) == "MSOLAPSvc.3/box.example:2383"
+def test_the_default_spn_is_portless():
+    """ADOMD calls DsMakeSpn WITH the port, but that justifies the string only on
+    SSPI. On the GSSAPI path this library actually takes, the host half is imported
+    as hostbased_service and goes through realm determination, where a trailing
+    `example:2383` maps to no realm. Neither form is KDC-tested, so the default is
+    the shape that shipped and that GSSAPI expects."""
+    assert Credential().target("box.example", 2383) == "MSOLAPSvc.3/box.example"
+
+
+def test_the_port_form_is_available_explicitly():
+    assert Credential(use_port=True).target("box.example", 2383) == ("MSOLAPSvc.3/box.example:2383")
 
 
 def test_a_named_instance_registers_under_the_instance_name():
@@ -236,10 +243,62 @@ def test_an_explicit_spn_overrides_everything():
 
 def test_the_service_class_is_configurable():
     """SQL Browser uses MSOLAPDisco.3; a site may register another class."""
-    assert Credential(service="MSOLAPDisco.3").target("box.example", 0) == (
+    assert Credential(service="MSOLAPDisco.3", use_port=True).target("box.example", 0) == (
         "MSOLAPDisco.3/box.example:0"
     )
 
 
 def test_no_port_falls_back_to_the_portless_form():
     assert Credential().target("box.example") == "MSOLAPSvc.3/box.example"
+
+
+# --- build_context passes BOTH halves of the SPN -------------------------------
+# spnego recomposes the SPN as f"{service}/{hostname}", so overriding only the host
+# silently discarded the service class of a full `spn=` override -- the main reason
+# a site sets one. These go through build_context, not just Credential.target():
+# the earlier tests asserted the string and so could not catch this.
+
+
+class _Spy:
+    """Captures what build_context hands to spnego.client."""
+
+    def __init__(self):
+        self.seen = {}
+
+    def client(self, **kwargs):
+        self.seen = kwargs
+        return object()
+
+
+def _spy_build(monkeypatch, credential, host="box.example", port=2383):
+    import sys
+    import types
+
+    spy = _Spy()
+    module = types.ModuleType("spnego")
+    module.client = spy.client
+    monkeypatch.setitem(sys.modules, "spnego", module)
+    auth.build_context(credential, host, None, port)
+    return spy.seen
+
+
+def test_a_full_spn_override_changes_the_service_class_too(monkeypatch):
+    seen = _spy_build(monkeypatch, Credential(spn="HOST/other.example"))
+    assert (seen["service"], seen["hostname"]) == ("HOST", "other.example")
+
+
+def test_the_default_reaches_spnego_as_service_and_bare_host(monkeypatch):
+    seen = _spy_build(monkeypatch, Credential())
+    assert (seen["service"], seen["hostname"]) == ("MSOLAPSvc.3", "box.example")
+
+
+def test_the_instance_form_keeps_the_instance_in_the_host_half(monkeypatch):
+    seen = _spy_build(monkeypatch, Credential(instance="TAB"))
+    assert (seen["service"], seen["hostname"]) == ("MSOLAPSvc.3", "box.example:TAB")
+
+
+def test_an_spn_without_a_slash_is_refused_not_an_IndexError(monkeypatch):
+    """`.split("/", 1)[1]` raised IndexError -- an uncaught exception outside the
+    FR-007 taxonomy, which open() turned into State.FAILED plus a bare IndexError."""
+    with pytest.raises(AuthenticationError, match="<service>/<host>"):
+        _spy_build(monkeypatch, Credential(spn="olap.corp.example"))

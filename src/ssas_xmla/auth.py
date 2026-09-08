@@ -44,22 +44,38 @@ class Credential:
     principal: str | None = None  # None means the ambient identity
     service: str = "MSOLAPSvc.3"
     instance: str | None = None  # a named instance, if the SPN is registered that way
-    spn: str | None = None  # full override, when neither form below is right
+    use_port: bool = False  # ask for MSOLAPSvc.3/host:port, as ADOMD does on SSPI
+    spn: str | None = None  # full override, service class included
 
     def target(self, host: str, port: int | None = None) -> str:
         """The SPN to request. NTLM ignores it; Kerberos does not.
 
-        Mirrors ADOMD's `CalculateNTAuthenticationSPN`: a named instance registers
-        as ``MSOLAPSvc.3/<server>:<instance>``, and otherwise the SPN carries the
-        **port** -- `DsMakeSpn` is called with it, producing
-        ``MSOLAPSvc.3/<server>:<port>``, not the portless form. Requesting
-        ``MSOLAPSvc.3/<server>`` is the shape NTLM tolerated and Kerberos will not.
+        **The default is the portless form**, and the port is used only when
+        `use_port` is set. That is deliberate, and it is a departure from the
+        reference client.
+
+        ADOMD's `CalculateNTAuthenticationSPN` calls `DsMakeSpn` *with* the port,
+        producing ``MSOLAPSvc.3/<server>:<port>`` (or ``:<instance>`` for a named
+        instance). But that justifies the string only on **SSPI**, where the SPN is
+        used as written. This library's audience is Linux, where `pyspnego` takes
+        the GSSAPI path: it builds ``service@hostname`` and imports it as
+        ``gssapi.NameType.hostbased_service`` (`spnego/_gss.py`), so the host half
+        goes through krb5 canonicalization *and realm determination*. Handing it
+        ``server.example:2383`` leaves the trailing component ``example:2383``,
+        which no ``[domain_realm]`` mapping or uppercase-domain heuristic can
+        resolve -- so the port form is likely to request a ticket in the wrong
+        realm on exactly the platform this library exists for.
+
+        Neither form has been tested against a KDC. Given that, the default stays
+        the shape that shipped and that GSSAPI expects, and the reference client's
+        forms are available explicitly: `use_port=True`, `instance=`, or a full
+        `spn=` override.
         """
         if self.spn:
             return self.spn
         if self.instance:
             return f"{self.service}/{host}:{self.instance}"
-        if port is not None:
+        if self.use_port and port is not None:
             return f"{self.service}/{host}:{port}"
         return f"{self.service}/{host}"
 
@@ -111,17 +127,21 @@ def build_context(
             f"unknown authMechanism {credential.mechanism!r}; expected kerberos, negotiate or ntlm"
         )
     protocol = "ntlm" if mechanism == "ntlm" else mechanism
-    # `hostname` carries the whole host part of the SPN, port included, because
-    # spnego composes it as f"{service}/{hostname}" and the reference client's SPN
-    # is `MSOLAPSvc.3/host:port`. NTLM ignores the target, which is why the portless
-    # form worked; Kerberos matches the SPN as registered and will not.
-    target_host = credential.target(host, port).split("/", 1)[1]
+    # BOTH halves are taken from target(), not just the host. spnego recomposes the
+    # SPN as f"{service}/{hostname}" (`spnego/_context.py`), so passing
+    # `service=credential.service` while overriding only the host silently discarded
+    # the service class of a full `spn=` override -- the main reason a site sets one.
+    service_part, separator, host_part = credential.target(host, port).partition("/")
+    if not separator or not host_part:
+        raise AuthenticationError(
+            f"spn must be of the form <service>/<host>; got {credential.spn!r}"
+        )
     try:
         return spnego.client(
             username=credential.principal,
             password=password,
-            hostname=target_host,
-            service=credential.service,
+            hostname=host_part,
+            service=service_part,
             protocol=protocol,
         )
     except Exception as exc:  # pragma: no cover - environment dependent
