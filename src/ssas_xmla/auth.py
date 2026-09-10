@@ -131,10 +131,21 @@ def build_context(
     # SPN as f"{service}/{hostname}" (`spnego/_context.py`), so passing
     # `service=credential.service` while overriding only the host silently discarded
     # the service class of a full `spn=` override -- the main reason a site sets one.
-    service_part, separator, host_part = credential.target(host, port).partition("/")
-    if not separator or not host_part:
+    # BOTH halves are validated, and the message reports the composed TARGET rather
+    # than credential.spn. Checking only the host half left the mirror image of the
+    # bug this validation exists for: `spn="/host.example"` partitions to an EMPTY
+    # service, and spnego substitutes its own default --
+    # `"%s/%s" % (service if service else "HOST", ...)` in spnego/_context.py -- so
+    # the caller silently gets `HOST/host.example`, the same silent service-class
+    # substitution from the other end. A slash inside `service` splits in the wrong
+    # place for the same reason. And naming credential.spn misreported a target that
+    # came from `host` rather than from an override: "got None".
+    target = credential.target(host, port)
+    service_part, separator, host_part = target.partition("/")
+    if not separator or not service_part or not host_part or "/" in host_part:
         raise AuthenticationError(
-            f"spn must be of the form <service>/<host>; got {credential.spn!r}"
+            f"the SPN must be <service>/<host>, both halves non-empty and no "
+            f"further '/'; composed {target!r}"
         )
     try:
         return spnego.client(
