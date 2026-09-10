@@ -8,10 +8,16 @@ instance.
 authentication mechanisms and what is verified about each, the wire protocol layer by layer,
 the Python API, and troubleshooting. Source in [`website/`](website/).
 
-Every other client for this binding is Windows-only: ADOMD.NET and the MSOLAP OLE DB provider
-are COM/.NET, `pyadomd` wraps ADOMD.NET through the CLR, and DuckDB's `msolap` extension states
-"Windows-only support due to COM dependencies". The `xmla` Python package speaks XMLA but only
-over HTTP, which is what requires the IIS pump in the first place.
+The vendor's clients for this binding are all Windows-only: ADOMD.NET and the MSOLAP OLE DB
+provider are COM/.NET, `pyadomd` wraps ADOMD.NET through the CLR, and DuckDB's `msolap`
+extension states "Windows-only support due to COM dependencies". The `xmla` Python package
+speaks XMLA but only over HTTP, which is what requires the IIS pump in the first place.
+
+One other project reaches this binding from Linux:
+[`xmla-extention`](https://hugr-lab.github.io/xmla-extention/), an independent C++ DuckDB
+extension on MIT krb5. It does not use this library and this library does not depend on it;
+reach for it when the result should land in DuckDB, and for this one when you want SSAS
+metadata inside a Python process with a single dependency and no native toolchain.
 
 Built from the Microsoft Open Specifications — see [`docs/discovery-brief.md`](docs/discovery-brief.md)
 for the citations behind each layer. Claims not yet backed by a recorded fixture are marked

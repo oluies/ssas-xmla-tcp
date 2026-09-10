@@ -130,6 +130,10 @@ const config: Config = {
             {label: 'GitHub', href: 'https://github.com/oluies/ssas-xmla-tcp'},
             {label: 'Issues', href: 'https://github.com/oluies/ssas-xmla-tcp/issues'},
             {label: 'Development', to: '/development/'},
+            {
+              label: 'xmla-extention (DuckDB)',
+              href: 'https://hugr-lab.github.io/xmla-extention/',
+            },
           ],
         },
       ],

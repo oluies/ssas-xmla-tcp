@@ -35,7 +35,8 @@ library. Nothing else.
 
 ## Why it exists
 
-SSAS speaks XMLA over two bindings, and until now only one of them was reachable from Linux:
+SSAS speaks XMLA over two bindings, and the vendor's clients for the native one are all
+Windows-only:
 
 | Client | Binding | Runs on Linux? |
 |---|---|---|
@@ -43,15 +44,14 @@ SSAS speaks XMLA over two bindings, and until now only one of them was reachable
 | `pyadomd` | native TCP | no — wraps ADOMD.NET through the CLR |
 | DuckDB `msolap` extension | native TCP | no — "Windows-only support due to COM dependencies" |
 | the `xmla` PyPI package | HTTP only | yes, but needs IIS + `msmdpump` in front of every instance |
-| **this library** | **native TCP** | **yes** |
+| [`xmla-extention`](https://hugr-lab.github.io/xmla-extention/) | native TCP | yes — a DuckDB extension in C++, on MIT krb5 |
+| **this library** | **native TCP** | **yes — pure Python, one dependency** |
 
-So the practical cost of reading SSAS from Linux has been an IIS deployment per instance.
-This library removes that requirement.
+So the practical cost of reading SSAS from Linux was an IIS deployment per instance. This
+library removes that requirement, as a Python package with `pyspnego` as its only dependency.
 
 It is built from the [Microsoft Open Specifications](./protocol/index.md#normative-references),
-not by inspection of other clients — with one documented exception, the post-authentication
-frame, which [MS-SSAS] does not specify at all and which was recovered by decompiling
-`AdomdClient` ([The sealed frame](./protocol/sealing.md)).
+not by inspection of other clients, save for the one layer the specification omits.
 
 ## Status
 
@@ -95,3 +95,15 @@ Deliberately, and each is a separate feature rather than a quiet extension:
 - **Nothing identifying is emitted.** No credential, token, host, address, account, principal,
   realm, machine name or SID reaches a log line or an error message, at any level. A CI gate
   scans every tracked file for those tokens.
+
+## Related
+
+[**`xmla-extention`**](https://hugr-lab.github.io/xmla-extention/) reads the same native
+XMLA/TCP binding from Linux as a DuckDB extension, so a query is ordinary SQL over an
+`ATTACH`ed model rather than a Python call. It is an independent C++ implementation on MIT
+krb5 — it does not use this library, and this library does not depend on it. Like this one it
+is read-only and NTLM-verified against SQL Server 2022.
+
+Which one fits depends on the shape of the consumer: reach for the extension when the result
+should land in DuckDB and be joined against other data, and for this library when you want
+SSAS metadata inside a Python process with one dependency and no native toolchain.
