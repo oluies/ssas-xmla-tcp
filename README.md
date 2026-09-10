@@ -4,6 +4,10 @@ A pure-Python client for the **SQL Server Analysis Services native XMLA/TCP bind
 Linux consumers can read SSAS metadata without an IIS / `msmdpump` deployment in front of the
 instance.
 
+**Documentation: <https://oluies.github.io/ssas-xmla-tcp/>** — getting started, the two
+authentication mechanisms and what is verified about each, the wire protocol layer by layer,
+the Python API, and troubleshooting. Source in [`website/`](website/).
+
 Every other client for this binding is Windows-only: ADOMD.NET and the MSOLAP OLE DB provider
 are COM/.NET, `pyadomd` wraps ADOMD.NET through the CLR, and DuckDB's `msolap` extension states
 "Windows-only support due to COM dependencies". The `xmla` Python package speaks XMLA but only

@@ -1,0 +1,66 @@
+/**
+ * Global styles. The classic preset bundles Infima; these override its
+ * variables rather than fighting them.
+ *
+ * The palette is deliberately not SQL Server red: this is a protocol library,
+ * and the pages it serves are mostly byte layouts and tables. Indigo for the
+ * chrome, a warm amber for the callouts that carry the UNVERIFIED claims.
+ */
+
+:root {
+  --ifm-color-primary: #3f4bb8;
+  --ifm-color-primary-dark: #3944a6;
+  --ifm-color-primary-darker: #363f9d;
+  --ifm-color-primary-darkest: #2c3481;
+  --ifm-color-primary-light: #4f5ac2;
+  --ifm-color-primary-lighter: #5964c6;
+  --ifm-color-primary-lightest: #7780d3;
+
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-monospace: ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+    Consolas, 'Liberation Mono', monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #98a2ff;
+  --ifm-color-primary-dark: #7b87ff;
+  --ifm-color-primary-darker: #6d7aff;
+  --ifm-color-primary-darkest: #4353ff;
+  --ifm-color-primary-light: #b5bdff;
+  --ifm-color-primary-lighter: #c3caff;
+  --ifm-color-primary-lightest: #edefff;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+.navbar__title {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.navbar__logo,
+.navbar__logo img {
+  height: 28px;
+  width: auto;
+}
+
+/* Byte-layout diagrams are drawn as code blocks; they must not wrap. */
+pre code {
+  tab-size: 4;
+}
+
+/* Tables in the reference pages are dense and wide -- let them scroll rather
+   than squeeze the type down. */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* An UNVERIFIED claim reads as a fact once it is set in body text, so the pages
+   mark them. Kept as a plain admonition class so it degrades to a blockquote. */
+.markdown strong:has(+ em) {
+  font-weight: 700;
+}

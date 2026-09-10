@@ -29,6 +29,10 @@ Active plan: [specs/001-ssas-xmla-tcp/plan.md](specs/001-ssas-xmla-tcp/plan.md)
   avoid.
 - **Read-only by construction.** Mutating operations must not exist in the codebase, not
   merely be unexposed.
+- **The docs site restates, it does not upgrade.** `website/` publishes to
+  https://oluies.github.io/ssas-xmla-tcp/. What is UNVERIFIED in `docs/discovery-brief.md`
+  stays UNVERIFIED there. Internal links must be relative file links — `onBrokenLinks` is
+  `throw`, and `docs-build.yml` is the PR gate.
 
 ## Related
 
