@@ -1,0 +1,16 @@
+<!-- Two things here are load-bearing, and both fail SILENTLY when removed.
+
+     width/height: WebKit reports naturalWidth 0 for an SVG carrying only a viewBox,
+     and the navbar rule is height:28px/width:auto, so the auto width resolves to 0
+     and the logo collapses. Chrome infers it from the viewBox; Safari does not.
+
+     No double hyphen inside these comments: SVG is parsed as strict XML, where a
+     double hyphen inside a comment is illegal. It makes the whole file unparseable,
+     the img fails to load, and nothing appears in the console. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ssas-xmla-tcp">
+  <rect width="64" height="64" rx="14" fill="#3f4bb8"/>
+  <!-- three stacked records: MB, CF, ME, i.e. a chunked DIME message -->
+  <rect x="12" y="16" width="40" height="8" rx="2" fill="#ffffff" opacity="0.95"/>
+  <rect x="12" y="28" width="30" height="8" rx="2" fill="#ffffff" opacity="0.7"/>
+  <rect x="12" y="40" width="36" height="8" rx="2" fill="#ffffff" opacity="0.45"/>
+</svg>

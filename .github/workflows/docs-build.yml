@@ -1,0 +1,42 @@
+name: Docs site build
+
+# Builds website/ on pull requests, and nothing else. pages.yml is the only other
+# place that builds the site, and it never runs on pull_request: it holds the Pages
+# concurrency group and the github-pages environment, so a PR run there would
+# cancel an in-flight deploy. Build only -- no pages: or id-token: permission.
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - ".github/workflows/docs-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      # onBrokenLinks / onBrokenAnchors are 'throw', so this job is the link gate.
+      # A gate that exits 0 on a broken link does not gate anything.
+      - name: npm ci && docusaurus build
+        working-directory: website
+        run: |
+          npm ci
+          npx docusaurus build
