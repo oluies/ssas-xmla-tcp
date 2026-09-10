@@ -85,13 +85,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except AuthenticationError as exc:
         print(f"AUTHENTICATION FAILED: {exc}", file=sys.stderr)
-        print(
-            "Reached the server; identity not established. Check the ticket or "
-            "keytab -- and the SPN, which must match how the instance is "
-            f"registered: this run asked for {credential.target(args.host, args.port)}. "
-            "Use --instance / --use-port / --spn if that is not the registered form.",
-            file=sys.stderr,
-        )
+        # The SPN half is Kerberos-only. NTLM ignores the target entirely, so
+        # telling an NTLM operator that the SPN "must match how the instance is
+        # registered" -- and pointing at three flags that cannot change anything --
+        # is the same misdirection this hint was written to remove, aimed at the one
+        # mechanism that actually works end to end.
+        if args.mechanism == "ntlm":
+            print(
+                "Reached the server; identity not established. NTLM ignores the "
+                "SPN, so check the account and $SSAS_PASSWORD.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Reached the server; identity not established. Check the ticket or "
+                "keytab -- and the SPN, which must match how the instance is "
+                f"registered: this run asked for {credential.target(args.host, args.port)}. "
+                "Use --instance / --use-port / --spn if that is not the registered form.",
+                file=sys.stderr,
+            )
         return 3
     except AuthorizationError as exc:
         print(f"AUTHORIZATION REFUSED: {exc}", file=sys.stderr)

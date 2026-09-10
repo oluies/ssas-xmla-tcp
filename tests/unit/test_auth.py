@@ -302,3 +302,29 @@ def test_an_spn_without_a_slash_is_refused_not_an_IndexError(monkeypatch):
     FR-007 taxonomy, which open() turned into State.FAILED plus a bare IndexError."""
     with pytest.raises(AuthenticationError, match="<service>/<host>"):
         _spy_build(monkeypatch, Credential(spn="olap.corp.example"))
+
+
+@pytest.mark.parametrize(
+    "credential,label",
+    [
+        (Credential(spn="/olap.example"), "empty service class"),
+        (Credential(spn="HOST/"), "empty host"),
+        (Credential(service="a/b"), "slash inside the service class"),
+    ],
+)
+def test_a_malformed_spn_is_refused_before_it_reaches_spnego(monkeypatch, credential, label):
+    """Validating only the HOST half left the mirror image of the bug the check
+    exists for. spnego substitutes its own default for an empty service class --
+    `"%s/%s" % (service if service else "HOST", ...)` -- so `spn="/host"` silently
+    requested HOST/host, which is the same silent service-class substitution from
+    the other end. A slash inside `service` mis-splits for the same reason."""
+    with pytest.raises(AuthenticationError, match="both halves non-empty"):
+        _spy_build(monkeypatch, credential)
+
+
+def test_the_refusal_names_the_composed_target_not_the_spn_field(monkeypatch):
+    """It used to interpolate credential.spn, so a target malformed via `host`
+    rather than via an override reported "got None" -- naming a field the caller
+    never set."""
+    with pytest.raises(AuthenticationError, match=r"composed 'MSOLAPSvc\.3/'"):
+        _spy_build(monkeypatch, Credential(), host="")

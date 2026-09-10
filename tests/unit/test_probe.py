@@ -195,3 +195,17 @@ def test_there_is_no_password_flag_to_reintroduce():
 def test_mechanism_choices_are_constrained():
     with pytest.raises(SystemExit):
         probe.main(ARGS + ["--mechanism", "telepathy"])
+
+
+def test_ntlm_is_not_told_to_check_an_spn_it_ignores(patched_connect, capsys):
+    """NTLM ignores the target entirely, so SPN advice on an NTLM failure points at
+    three flags that cannot change anything — the same misdirection the hint was
+    written to remove, aimed at the one mechanism verified end to end."""
+    from ssas_xmla.errors import AuthenticationError
+
+    patched_connect(_FakeSession(raises=AuthenticationError("refused")))
+    assert probe.main(["--host", "h", "--port", "2383", "--mechanism", "ntlm"]) == 3
+    err = capsys.readouterr().err
+    assert "SPN" in err  # it says NTLM ignores it...
+    assert "--instance" not in err and "--use-port" not in err  # ...and offers no flag
+    assert "SSAS_PASSWORD" in err

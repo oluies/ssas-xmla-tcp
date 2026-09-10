@@ -244,6 +244,17 @@ The SPN matters more under Kerberos than it appears. NTLM ignores the target, wh
 portless `MSOLAPSvc.3/host` this library used to request worked; Kerberos matches the SPN as
 registered. Per `CalculateNTAuthenticationSPN`, the reference client asks for
 `MSOLAPSvc.3/<server>:<port>` (DsMakeSpn is called *with* the port) or
-`MSOLAPSvc.3/<server>:<instance>` for a named instance. `Credential.target()` now produces the
-port form by default, with `instance=` and a full `spn=` override for sites that registered it
-differently.
+`MSOLAPSvc.3/<server>:<instance>` for a named instance.
+
+**This library does not follow that by default, deliberately.** `Credential.target()` produces
+the **portless** `MSOLAPSvc.3/<server>`, and the reference client's forms are opt-in:
+`use_port=True`, `instance=`, or a full `spn=` override (service class included).
+
+The reason is that the ADOMD citation above justifies the string only on **SSPI**, where the
+SPN is used as written. On the **GSSAPI** path this library actually takes, `pyspnego` builds
+`service@hostname` and imports it as `gssapi.NameType.hostbased_service`
+(`spnego/_gss.py`), so the host half goes through krb5 canonicalization *and realm
+determination*. Handing it `server.example:2383` leaves a trailing component of
+`example:2383`, which no `[domain_realm]` mapping or uppercase-domain heuristic resolves — a
+ticket request in the wrong realm, on exactly the first real Kerberos attempt. Neither form is
+KDC-tested, so the default stays the shape that shipped and that GSSAPI expects.

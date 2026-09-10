@@ -61,8 +61,12 @@ pip install -e ".[dev]"
 ## Verify a connection
 
 ```bash
-python -m ssas_xmla.probe --host HOST --port PORT
+python -m ssas_xmla.probe --host HOST --port PORT --mechanism ntlm
 ```
+
+`--mechanism ntlm` is not decoration: the default is `kerberos`, and a padding mechanism
+cannot be carried by this frame layout, so `seal_frame` refuses it (exit 7). NTLM is the only
+path exercised end to end — see [Status](#status).
 
 Every outcome is informative:
 
@@ -73,6 +77,7 @@ Every outcome is informative:
 | `AuthorizationError` | identity fine; the account may not read. Check permissions |
 | `ConnectionError` | never reached a server. Check host, port, firewall |
 | `NegotiationError` | the server declined clear-text encoding — **this changes the project's scope**, see D2 in `specs/001-ssas-xmla-tcp/research.md` |
+| `ProtocolError` (exit 7) | the bytes did not match the specification. If it names padding, the negotiated mechanism pads and this frame has no field for the unpadded length — retry with `--mechanism ntlm` |
 
 ## Tests
 
