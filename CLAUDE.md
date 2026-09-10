@@ -2,7 +2,9 @@
 
 A pure-Python client for the SQL Server Analysis Services **native XMLA/TCP binding**, so
 Linux consumers can read SSAS metadata without an IIS/`msmdpump` deployment in front of the
-instance. Nothing else implements this binding outside the Windows/COM/.NET stack.
+instance. The vendor's clients for this binding are all Windows/COM/.NET; the one other
+Linux implementation is hugr-lab/xmla-extention, an independent C++ DuckDB extension on
+MIT krb5 that neither uses nor is used by this library.
 
 <!-- SPECKIT START -->
 Active plan: [specs/001-ssas-xmla-tcp/plan.md](specs/001-ssas-xmla-tcp/plan.md)
