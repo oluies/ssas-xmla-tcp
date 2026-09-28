@@ -7,9 +7,11 @@ binding, with no IIS in front of it? — and names the stage that failed if not.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 
+from . import __version__
 from .auth import Credential
 from .client import connect
 from .errors import (
@@ -21,6 +23,28 @@ from .errors import (
     ServerError,
     SsasError,
 )
+
+log = logging.getLogger(__name__)
+
+
+def _server_version(session) -> str | None:
+    """DBMS_VERSION as the instance reports it, or None.
+
+    Best effort, and never fatal. A probe that reached the server and listed its
+    data sources has already answered the question it exists to answer, so an
+    extra diagnostic request must not be able to turn that into a failure --
+    hence the broad catch. Only DBMS_VERSION is read: it is a version number,
+    while the surrounding properties are a place a machine name can appear, and
+    nothing identifying may reach a log line (constitution I).
+    """
+    try:
+        rows = session.discover("DISCOVER_PROPERTIES")
+    except Exception:
+        return None
+    for row in rows:
+        if row.get("PropertyName") == "DBMS_VERSION":
+            return row.get("PropertyValue") or None
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +75,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args(argv)
 
+    # Configuring logging is an entry point's business, not a library's: a module
+    # that calls basicConfig() on import steals the decision from whoever imported
+    # it. stderr, because stdout carries the result a script parses.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+    # Which build produced this run. A bug report that does not say is a bug
+    # report about an unknown revision.
+    log.info("ssas-xmla-tcp %s", __version__)
+
     credential = Credential(
         mechanism=args.mechanism,
         principal=args.principal,
@@ -71,6 +103,10 @@ def main(argv: list[str] | None = None) -> int:
             password=password,
         ) as session:
             result = session.discover_datasources()
+            # After the answer, not before it: the data sources are what the
+            # probe is for, and the version is a diagnostic that rides along.
+            version = _server_version(session)
+            log.info("server DBMS_VERSION %s", version or "not reported")
     except NegotiationError as exc:
         print(f"NEGOTIATION FAILED: {exc}", file=sys.stderr)
         print(
