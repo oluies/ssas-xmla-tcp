@@ -7,6 +7,7 @@ offline suite stays hermetic (constitution III):
     SSAS_PORT       its PINNED tcp port (this client does not use the redirector)
     SSAS_PRINCIPAL  optional; omit to use the ambient Kerberos identity
     SSAS_MECHANISM  kerberos (default) or ntlm
+    SSAS_PASSWORD   required by ntlm, which has no ambient identity to fall back on
     SSAS_CATALOG    optional catalog for the query tests
 """
 
@@ -51,10 +52,31 @@ def live_credential():
     )
 
 
+@pytest.fixture(scope="session")
+def live_password(live_credential):
+    """The password, from the environment only -- never from the command line.
+
+    Credential deliberately has no password field, so a password reaches the
+    security layer ONLY by being passed to connect(). This fixture did not pass
+    it, which made every documented NTLM run fail at context creation:
+    pyspnego found no credential store ("the credential cache did not exist or
+    contained no credentials") and the wrapper reported "could not initialise a
+    ntlm security context" -- a message naming the mechanism, not the variable
+    that was dropped between the README and the call.
+    """
+    password = os.environ.get("SSAS_PASSWORD") or None
+    if password is None and live_credential.mechanism.lower() == "ntlm":
+        pytest.skip(
+            "SSAS_PASSWORD is not set and NTLM cannot authenticate without it: it "
+            "derives its key from the password and reads no ticket cache"
+        )
+    return password
+
+
 @pytest.fixture
-def live_session(live_target, live_credential):
+def live_session(live_target, live_credential, live_password):
     from ssas_xmla import connect
 
     host, port = live_target
-    with connect(host, port, credential=live_credential) as session:
+    with connect(host, port, credential=live_credential, password=live_password) as session:
         yield session

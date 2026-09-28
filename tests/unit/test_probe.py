@@ -6,9 +6,11 @@ script has to tell "wrong port" from "wrong password" from "no permission"
 without parsing prose.
 """
 
+import logging
+
 import pytest
 
-from ssas_xmla import probe
+from ssas_xmla import __version__, probe
 from ssas_xmla.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -20,9 +22,11 @@ from ssas_xmla.rowset import Rowset
 
 
 class _FakeSession:
-    def __init__(self, result=None, raises=None):
+    def __init__(self, result=None, raises=None, properties=None, discover_raises=None):
         self._result = result
         self._raises = raises
+        self._properties = properties if properties is not None else Rowset()
+        self._discover_raises = discover_raises
 
     def __enter__(self):
         return self
@@ -34,6 +38,11 @@ class _FakeSession:
         if self._raises is not None:
             raise self._raises
         return self._result
+
+    def discover(self, request_type, *args, **kwargs):
+        if self._discover_raises is not None:
+            raise self._discover_raises
+        return self._properties
 
 
 @pytest.fixture
@@ -209,3 +218,50 @@ def test_ntlm_is_not_told_to_check_an_spn_it_ignores(patched_connect, capsys):
     assert "SPN" in err  # it says NTLM ignores it...
     assert "--instance" not in err and "--use-port" not in err  # ...and offers no flag
     assert "SSAS_PASSWORD" in err
+
+
+def test_the_client_version_is_logged_at_info(patched_connect, caplog):
+    """Which build produced a run. A bug report that does not say is a report
+    about an unknown revision, and nothing else in the output names one."""
+    caplog.set_level(logging.INFO)
+    patched_connect(_FakeSession(result=Rowset()))
+    assert probe.main(ARGS) == 0
+    version_lines = [record for record in caplog.records if __version__ in record.getMessage()]
+    assert version_lines, [r.getMessage() for r in caplog.records]
+    assert version_lines[0].levelname == "INFO"
+
+
+def test_the_server_version_is_logged_when_the_instance_reports_it(patched_connect, caplog):
+    caplog.set_level(logging.INFO)
+    properties = Rowset(
+        columns=["PropertyName", "PropertyValue"],
+        rows=[
+            {"PropertyName": "ProviderName", "PropertyValue": "Microsoft Analysis Services"},
+            {"PropertyName": "DBMS_VERSION", "PropertyValue": "16.0.43"},
+        ],
+    )
+    patched_connect(_FakeSession(result=Rowset(), properties=properties))
+    assert probe.main(ARGS) == 0
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "16.0.43" in logged
+
+
+def test_a_server_that_declines_the_version_request_still_probes_clean(patched_connect, caplog):
+    """The version is a diagnostic riding along with the answer. A server that
+    will not give it has still answered the question the probe exists to ask, so
+    it must not change the exit code an operator scripts against."""
+    from ssas_xmla.errors import ServerError
+
+    caplog.set_level(logging.INFO)
+    patched_connect(_FakeSession(result=Rowset(), discover_raises=ServerError("unsupported")))
+    assert probe.main(ARGS) == 0
+    assert "not reported" in " ".join(r.getMessage() for r in caplog.records)
+
+
+def test_the_version_lines_go_to_stderr_not_stdout(patched_connect, capsys):
+    """stdout carries the machine-readable result -- a script parsing "OK - N"
+    must not have to skip log lines to find it."""
+    patched_connect(_FakeSession(result=Rowset()))
+    probe.main(ARGS)
+    captured = capsys.readouterr()
+    assert __version__ not in captured.out
