@@ -13,3 +13,8 @@ dist/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# Docusaurus site (website/)
+node_modules/
+website/build/
+website/.docusaurus/

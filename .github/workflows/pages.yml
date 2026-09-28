@@ -1,0 +1,55 @@
+name: Deploy docs
+
+# Publishes website/ to GitHub Pages at https://oluies.github.io/ssas-xmla-tcp/.
+#
+# Requires Pages to be enabled for the repository with "GitHub Actions" as the
+# source (Settings -> Pages -> Build and deployment -> Source). Without that the
+# deploy step fails with "Get Pages site failed"; nothing here can set it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Build the docs site
+        working-directory: website
+        run: |
+          npm ci
+          npx docusaurus build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
