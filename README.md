@@ -94,9 +94,9 @@ path exercised end to end — see [Status](#status).
 Two lines go to **stderr at INFO**: the client version (`INFO ssas-xmla-tcp 0.1.0`) and, on a
 successful run, the instance's `DBMSVersion` — so a bug report can name the revision and the
 server it was talking to. stdout stays the machine-readable result. When the version is not
-available the line says which of the three reasons applies: the request was declined, the
-server reports no such property, or the property is present with no value. None of them changes
-the exit code.
+available the line says which reason applies — the request was declined, the server reports no
+such property, the property is present with no value, or its value was not version-shaped, in
+which case it is described rather than echoed. None of them changes the exit code.
 
 Every outcome is informative:
 

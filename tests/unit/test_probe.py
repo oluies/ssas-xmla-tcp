@@ -337,10 +337,48 @@ def test_no_fault_text_reaches_the_version_log_line(patched_connect, caplog):
     assert "EXAMPLE" not in " ".join(record.getMessage() for record in caplog.records)
 
 
-def test_the_version_lines_go_to_stderr_not_stdout(patched_connect, capsys):
+def test_an_unexpected_value_is_not_printed_verbatim(patched_connect, caplog):
+    """Every other server-derived string in this client is scrubbed before a
+    caller sees it. This one is logged, so a value that is not version-shaped is
+    described rather than echoed -- a misnamed or unexpected property must not
+    put arbitrary server text on a log line."""
+    caplog.set_level(logging.INFO)
+    properties = _properties(
+        # Not a connection string, deliberately: the leak gate blocks that literal
+        # in a committed file, and is right to -- it cannot tell a synthetic one
+        # from a real one.
+        [synth.discover_properties_row("DBMSVersion", "Analysis Services on EXAMPLE-BOX")]
+    )
+    patched_connect(_FakeSession(result=Rowset(), properties=properties))
+    assert probe.main(ARGS) == 0
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "not version-shaped" in logged
+    assert "EXAMPLE-BOX" not in logged
+
+
+def test_a_declined_request_names_its_type_at_debug(patched_connect, caplog):
+    """Silence reported a server declining and a defect on this side identically.
+    The type name separates them; the message text stays out, because a fault can
+    carry the host or the principal."""
+    from ssas_xmla.errors import ServerError
+
+    caplog.set_level(logging.DEBUG)
+    patched_connect(_FakeSession(result=Rowset(), discover_raises=ServerError("EXAMPLE-DETAIL")))
+    assert probe.main(ARGS) == 0
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "ServerError" in logged
+    assert "EXAMPLE-DETAIL" not in logged
+
+
+def test_no_version_line_reaches_stdout(patched_connect, capsys):
     """stdout carries the machine-readable result -- a script parsing "OK - N"
-    must not have to skip log lines to find it."""
-    patched_connect(_FakeSession(result=Rowset()))
+    must not have to skip log lines to find it. Asserted for the server version
+    too, which is the line emitted inside the success path, right next to it."""
+    properties = _properties([synth.discover_properties_row("DBMSVersion", "16.0.43")])
+    patched_connect(_FakeSession(result=Rowset(), properties=properties))
     probe.main(ARGS)
     captured = capsys.readouterr()
+    assert "OK -" in captured.out
     assert __version__ not in captured.out
+    assert "16.0.43" not in captured.out
+    assert "DBMSVersion" not in captured.out

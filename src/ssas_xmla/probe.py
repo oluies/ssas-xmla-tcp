@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 
 from . import __version__
@@ -39,6 +40,15 @@ PROPERTY_NAME_COLUMN = "PropertyName"
 VALUE_COLUMN = "Value"
 VERSION_PROPERTY = "DBMSVersion"
 
+# A version is server-provided text, and every other server-derived string in
+# this client passes through the scrubber before a caller can see it. This one
+# is LOGGED, so it is checked for shape first: a digit, then version punctuation,
+# bounded length. The docstring used to argue the property "is a version number",
+# but that is a claim about the server's behaviour, not about the string that
+# arrived -- and constitution I is not satisfied by an assumption about a remote
+# party. Anything else is reported as unexpected rather than printed.
+_VERSION_SHAPE = re.compile(r"^[0-9][0-9A-Za-z.\- ]{0,31}$")
+
 
 def _server_version(session) -> tuple[str | None, str]:
     """(version, reason) from DISCOVER_PROPERTIES. Never raises.
@@ -60,16 +70,22 @@ def _server_version(session) -> tuple[str | None, str]:
     """
     try:
         rows = session.discover("DISCOVER_PROPERTIES")
-    except Exception:
-        # Deliberately without the exception text: a fault can carry the host,
-        # the principal or a connection string.
+    except Exception as exc:
+        # The exception TYPE, never its text: a fault can carry the host, the
+        # principal or a connection string. The type is what distinguishes a
+        # server declining from a defect on this side -- an AttributeError or a
+        # ProtocolError from a desynchronised seal layer is not the same event,
+        # and silence reported them identically.
+        log.debug("%s request failed: %s", VERSION_PROPERTY, type(exc).__name__)
         return None, "the request was declined"
     for row in rows:
         if row.get(PROPERTY_NAME_COLUMN) == VERSION_PROPERTY:
             value = row.get(VALUE_COLUMN)
-            if value:
-                return value, "ok"
-            return None, f"the {VERSION_PROPERTY} row carried no {VALUE_COLUMN}"
+            if not value:
+                return None, f"the {VERSION_PROPERTY} row carried no {VALUE_COLUMN}"
+            if not _VERSION_SHAPE.match(value):
+                return None, f"the {VERSION_PROPERTY} value was not version-shaped"
+            return value, "ok"
     return None, f"the server reported no {VERSION_PROPERTY} property"
 
 
