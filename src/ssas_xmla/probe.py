@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 
 from . import __version__
@@ -27,24 +28,65 @@ from .errors import (
 log = logging.getLogger(__name__)
 
 
-def _server_version(session) -> str | None:
-    """DBMS_VERSION as the instance reports it, or None.
+# The DISCOVER_PROPERTIES rowset, from the specification rather than from
+# memory: its columns are PropertyName, PropertyDescription, PropertyType,
+# PropertyAccessType, IsRequired and Value -- there is NO PropertyValue column --
+# and the version property is spelled DBMSVersion, not DBMS_VERSION. The first
+# version of this code had BOTH names wrong, and neither could announce itself:
+# a name the server does not send reads as None, so the probe reported "not
+# reported" against every server rather than failing where the mistake was. The
+# schema is recorded with its citations in docs/discovery-brief.md.
+PROPERTY_NAME_COLUMN = "PropertyName"
+VALUE_COLUMN = "Value"
+VERSION_PROPERTY = "DBMSVersion"
+
+# A version is server-provided text, and every other server-derived string in
+# this client passes through the scrubber before a caller can see it. This one
+# is LOGGED, so it is checked for shape first: a digit, then version punctuation,
+# bounded length. The docstring used to argue the property "is a version number",
+# but that is a claim about the server's behaviour, not about the string that
+# arrived -- and constitution I is not satisfied by an assumption about a remote
+# party. Anything else is reported as unexpected rather than printed.
+_VERSION_SHAPE = re.compile(r"^[0-9][0-9A-Za-z.\- ]{0,31}$")
+
+
+def _server_version(session) -> tuple[str | None, str]:
+    """(version, reason) from DISCOVER_PROPERTIES. Never raises.
 
     Best effort, and never fatal. A probe that reached the server and listed its
     data sources has already answered the question it exists to answer, so an
     extra diagnostic request must not be able to turn that into a failure --
-    hence the broad catch. Only DBMS_VERSION is read: it is a version number,
-    while the surrounding properties are a place a machine name can appear, and
-    nothing identifying may reach a log line (constitution I).
+    hence the broad catch.
+
+    The reason exists because the three ways this comes back empty are not the
+    same event, and collapsing them is what hid the original bug: a declined
+    request, a server that reports no such property, and a row that IS there
+    while the value reads empty all logged one indistinguishable line. The third
+    is what a wrong column name looks like from the outside.
+
+    Only the version property is read. The surrounding properties include
+    ServerName and UserName, which are exactly what may not reach a log line
+    (constitution I).
     """
     try:
         rows = session.discover("DISCOVER_PROPERTIES")
-    except Exception:
-        return None
+    except Exception as exc:
+        # The exception TYPE, never its text: a fault can carry the host, the
+        # principal or a connection string. The type is what distinguishes a
+        # server declining from a defect on this side -- an AttributeError or a
+        # ProtocolError from a desynchronised seal layer is not the same event,
+        # and silence reported them identically.
+        log.debug("%s request failed: %s", VERSION_PROPERTY, type(exc).__name__)
+        return None, "the request was declined"
     for row in rows:
-        if row.get("PropertyName") == "DBMS_VERSION":
-            return row.get("PropertyValue") or None
-    return None
+        if row.get(PROPERTY_NAME_COLUMN) == VERSION_PROPERTY:
+            value = row.get(VALUE_COLUMN)
+            if not value:
+                return None, f"the {VERSION_PROPERTY} row carried no {VALUE_COLUMN}"
+            if not _VERSION_SHAPE.match(value):
+                return None, f"the {VERSION_PROPERTY} value was not version-shaped"
+            return value, "ok"
+    return None, f"the server reported no {VERSION_PROPERTY} property"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,8 +147,11 @@ def main(argv: list[str] | None = None) -> int:
             result = session.discover_datasources()
             # After the answer, not before it: the data sources are what the
             # probe is for, and the version is a diagnostic that rides along.
-            version = _server_version(session)
-            log.info("server DBMS_VERSION %s", version or "not reported")
+            version, reason = _server_version(session)
+            if version:
+                log.info("server %s %s", VERSION_PROPERTY, version)
+            else:
+                log.info("server version unavailable: %s", reason)
     except NegotiationError as exc:
         print(f"NEGOTIATION FAILED: {exc}", file=sys.stderr)
         print(
