@@ -92,9 +92,11 @@ cannot be carried by this frame layout, so `seal_frame` refuses it (exit 7). NTL
 path exercised end to end — see [Status](#status).
 
 Two lines go to **stderr at INFO**: the client version (`INFO ssas-xmla-tcp 0.1.0`) and, on a
-successful run, the instance's `DBMS_VERSION` — so a bug report can name the revision and the
-server it was talking to. stdout stays the machine-readable result. A server that declines the
-version request logs `not reported` and does not change the exit code.
+successful run, the instance's `DBMSVersion` — so a bug report can name the revision and the
+server it was talking to. stdout stays the machine-readable result. When the version is not
+available the line says which of the three reasons applies: the request was declined, the
+server reports no such property, or the property is present with no value. None of them changes
+the exit code.
 
 Every outcome is informative:
 

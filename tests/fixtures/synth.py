@@ -124,3 +124,63 @@ SYNTAX_FAULT = (
     "<faultstring>Query (1, 8) The syntax for the query is incorrect.</faultstring>"
     "</Fault></Body></Envelope>"
 )
+
+
+# The DISCOVER_PROPERTIES rowset columns, in the order a server sends them
+# ([MS-SSAS] "Server Response", and the DISCOVER_PROPERTIES rowset definition).
+# There is no PropertyValue column; the value column is Value.
+DISCOVER_PROPERTIES_COLUMNS = (
+    "PropertyName",
+    "PropertyDescription",
+    "PropertyType",
+    "PropertyAccessType",
+    "IsRequired",
+    "Value",
+)
+
+
+def discover_properties_row(name: str, value: str | None, **overrides: str) -> dict[str, str]:
+    """One DISCOVER_PROPERTIES row carrying every column a server sends.
+
+    `value=None` omits the Value element, which is what the specification's own
+    example shows for a property the server has no value for -- the case that
+    must stay distinguishable from a property that is absent entirely.
+    """
+    row = {
+        "PropertyName": name,
+        "PropertyDescription": name,
+        "PropertyType": "string",
+        "PropertyAccessType": "Read",
+        "IsRequired": "false",
+    }
+    if value is not None:
+        row["Value"] = value
+    row.update(overrides)
+    return row
+
+
+def discover_properties_response(rows: list[dict[str, str]]) -> str:
+    """A DISCOVER_PROPERTIES response shaped as [MS-SSAS] shows a server sending one.
+
+    Synthesized from the specification's published example, never captured. That
+    example carries a machine name and an account of its own (ServerName,
+    UserName), and a capture would carry this site's, while the only thing a test
+    needs is the element NAMES -- reading one the server does not send is the
+    defect this fixture exists to make visible.
+
+    Version values here are three-part. A real one is four (16.0.x.y), which is
+    dotted-quad shaped, and the leak gate refuses a committed file containing one:
+    it cannot tell a build number from an address, and failing closed is the right
+    way round.
+    """
+    body = "".join(
+        "<row>" + "".join(f"<{name}>{text}</{name}>" for name, text in row.items()) + "</row>"
+        for row in rows
+    )
+    return (
+        '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
+        '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+        '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">'
+        f"{body}"
+        "</root></return></DiscoverResponse></Body></Envelope>"
+    )

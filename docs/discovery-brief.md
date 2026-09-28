@@ -108,6 +108,35 @@ unwrapped. `pyspnego` supports this; it is additional work, not a blocker.
 `Authenticate`, `Discover` and `Execute` — the same three the HTTP binding uses, so SOAP
 envelopes and all response parsing are shared between bindings.
 
+### Server properties — DISCOVER_PROPERTIES
+
+Reporting an instance's version means reading one row of one rowset, and both names in it are
+easy to get wrong from memory. A row carries six columns:
+
+| Column | Note |
+|---|---|
+| `PropertyName` | the property's name |
+| `PropertyDescription` | localizable text; may be NULL |
+| `PropertyType` | the XML data type; may be NULL |
+| `PropertyAccessType` | `Read`, `Write` or `ReadWrite` |
+| `IsRequired` | boolean; may be NULL |
+| `Value` | the current value — **may be absent entirely**, which is not an error |
+
+There is **no `PropertyValue` column**, and the version property is spelled **`DBMSVersion`**,
+not `DBMS_VERSION` — the second is the OLE DB spelling (`DBPROP_DBMSVER`) and this rowset does
+not use it. Either mistake fails silently in the same way: a name the server does not send
+reads as absent, so a client reports "no version" about a server that reported one perfectly
+well. Both were wrong in the first version of `probe.py` and were caught in review, not by a
+test — the test had been written against the same wrong name.
+
+The same rowset also carries `ServerName` and `UserName`. Read the one property, never the row
+set, or constitution I is broken by the diagnostic that was meant to help.
+
+**Confirmed against the specification, not against a capture of our own.** The corrected client
+has not yet printed a version from a live instance; the next probe run against the
+domain-joined instance closes that loop. `tests/fixtures/synth.py` holds a synthesized response
+of this shape, built from the specification's published example rather than recorded.
+
 ## Named-instance resolution — a real specification gap
 
 A default instance listens on 2383. A named instance is assigned a dynamic port, and the SQL
@@ -135,6 +164,11 @@ derived addition.
 - [MS-SSSO] Analysis Services — https://learn.microsoft.com/en-us/openspecs/sql_server_protocols/ms-ssso/e8ec30a5-3c27-478b-9921-74e0d4d7f12b
 - [MS-SSSO] Named SQL Server Instance Resolution — https://learn.microsoft.com/en-us/openspecs/sql_server_protocols/ms-ssso/0a4ddedb-9121-4908-b721-ad8f0958f728
 - [MC-SQLR] SQL Server Resolution Protocol — https://learn.microsoft.com/en-us/openspecs/windows_protocols/mc-sqlr/1ea6e25f-bff9-4364-ba21-5dc449a601b7
+- [MS-SSAS] Server Response — a complete DISCOVER_PROPERTIES response, showing the `Value`
+  column and the `DBMSVersion` property —
+  https://learn.microsoft.com/en-us/openspecs/sql_server_protocols/ms-ssas/8cac5d1a-aeaa-4bd0-9279-c06f7f70f0b5
+- DISCOVER_PROPERTIES Rowset — the column definitions —
+  https://learn.microsoft.com/en-us/previous-versions/sql/sql-server-2012/ms126045(v=sql.110)
 - [MS-BINXML] Binary XML — https://learn.microsoft.com/en-us/openspecs/sql_server_protocols/ms-binxml/
 - [DIME] — https://go.microsoft.com/fwlink/?LinkId=89847
 - [RFC4178] SPNEGO — https://www.rfc-editor.org/rfc/rfc4178

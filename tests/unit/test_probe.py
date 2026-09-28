@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from ssas_xmla import __version__, probe
+from ssas_xmla import __version__, probe, rowset
 from ssas_xmla.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -19,6 +19,7 @@ from ssas_xmla.errors import (
     ServerError,
 )
 from ssas_xmla.rowset import Rowset
+from tests.fixtures import synth
 
 
 class _FakeSession:
@@ -231,19 +232,81 @@ def test_the_client_version_is_logged_at_info(patched_connect, caplog):
     assert version_lines[0].levelname == "INFO"
 
 
+class _ServerRow(dict):
+    """A row that refuses a column DISCOVER_PROPERTIES does not carry.
+
+    The first version of these tests mocked a `PropertyValue` column, which no
+    such rowset has, so the test agreed with the bug and passed while the feature
+    never worked against a real instance. A plain dict cannot catch that: `.get()`
+    on a name the server never sends returns None, which is exactly what the
+    broken code expected to see. This one says so instead.
+    """
+
+    def get(self, key, default=None):
+        if key not in synth.DISCOVER_PROPERTIES_COLUMNS:
+            raise AssertionError(
+                f"probe read column {key!r}, which a DISCOVER_PROPERTIES row does not "
+                f"carry; a row has {list(synth.DISCOVER_PROPERTIES_COLUMNS)}"
+            )
+        return super().get(key, default)
+
+
+def _properties(rows):
+    return Rowset(
+        columns=list(synth.DISCOVER_PROPERTIES_COLUMNS),
+        rows=[_ServerRow(row) for row in rows],
+    )
+
+
 def test_the_server_version_is_logged_when_the_instance_reports_it(patched_connect, caplog):
     caplog.set_level(logging.INFO)
-    properties = Rowset(
-        columns=["PropertyName", "PropertyValue"],
-        rows=[
-            {"PropertyName": "ProviderName", "PropertyValue": "Microsoft Analysis Services"},
-            {"PropertyName": "DBMS_VERSION", "PropertyValue": "16.0.43"},
-        ],
+    properties = _properties(
+        [
+            synth.discover_properties_row("ProviderName", "OLAP Server"),
+            synth.discover_properties_row("DBMSVersion", "16.0.43"),
+        ]
     )
     patched_connect(_FakeSession(result=Rowset(), properties=properties))
     assert probe.main(ARGS) == 0
-    logged = " ".join(record.getMessage() for record in caplog.records)
-    assert "16.0.43" in logged
+    assert "16.0.43" in " ".join(record.getMessage() for record in caplog.records)
+
+
+def test_the_version_is_read_out_of_a_real_response_document(patched_connect, caplog):
+    """Names asserted against a spec-shaped document, not against a dict this test
+    wrote. A hand-built row can agree with whatever the code happens to read; a
+    response parsed by `rowset` can only carry what a server actually sends."""
+    caplog.set_level(logging.INFO)
+    document = synth.discover_properties_response(
+        [
+            synth.discover_properties_row("ProviderName", "OLAP Server"),
+            synth.discover_properties_row("DBMSVersion", "16.0.43"),
+        ]
+    )
+    parsed = rowset.parse(document)
+    assert "PropertyValue" not in parsed.columns  # the name this code used to read
+    assert "Value" in parsed.columns
+    patched_connect(_FakeSession(result=Rowset(), properties=parsed))
+    assert probe.main(ARGS) == 0
+    assert "16.0.43" in " ".join(record.getMessage() for record in caplog.records)
+
+
+def test_a_row_with_no_value_is_not_reported_as_an_absent_property(patched_connect, caplog):
+    """The two are different events, and collapsing them is what hid the original
+    defect: reading a column the server does not send looks exactly like a row
+    whose value is empty, and both used to print the same line."""
+    caplog.set_level(logging.INFO)
+    properties = _properties([synth.discover_properties_row("DBMSVersion", None)])
+    patched_connect(_FakeSession(result=Rowset(), properties=properties))
+    assert probe.main(ARGS) == 0
+    assert "carried no Value" in " ".join(record.getMessage() for record in caplog.records)
+
+
+def test_a_server_with_no_version_property_says_so(patched_connect, caplog):
+    caplog.set_level(logging.INFO)
+    properties = _properties([synth.discover_properties_row("ProviderName", "OLAP Server")])
+    patched_connect(_FakeSession(result=Rowset(), properties=properties))
+    assert probe.main(ARGS) == 0
+    assert "no DBMSVersion property" in " ".join(record.getMessage() for record in caplog.records)
 
 
 def test_a_server_that_declines_the_version_request_still_probes_clean(patched_connect, caplog):
@@ -255,7 +318,23 @@ def test_a_server_that_declines_the_version_request_still_probes_clean(patched_c
     caplog.set_level(logging.INFO)
     patched_connect(_FakeSession(result=Rowset(), discover_raises=ServerError("unsupported")))
     assert probe.main(ARGS) == 0
-    assert "not reported" in " ".join(r.getMessage() for r in caplog.records)
+    assert "declined" in " ".join(record.getMessage() for record in caplog.records)
+
+
+def test_no_fault_text_reaches_the_version_log_line(patched_connect, caplog):
+    """A fault can carry the host, the principal or a connection string, and a
+    diagnostic that reports one must not become the leak."""
+    from ssas_xmla.errors import ServerError
+
+    caplog.set_level(logging.INFO)
+    patched_connect(
+        _FakeSession(
+            result=Rowset(),
+            discover_raises=ServerError("Either the user, EXAMPLE\\reader, is not authorised"),
+        )
+    )
+    probe.main(ARGS)
+    assert "EXAMPLE" not in " ".join(record.getMessage() for record in caplog.records)
 
 
 def test_the_version_lines_go_to_stderr_not_stdout(patched_connect, capsys):
