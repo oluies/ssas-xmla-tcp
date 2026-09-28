@@ -21,9 +21,11 @@ Active plan: [specs/001-ssas-xmla-tcp/plan.md](specs/001-ssas-xmla-tcp/plan.md)
 
 - **Binary fixtures are not opaque.** A GSS/SPNEGO token carries the principal, realm, target
   service and often the machine name. Handshake fixtures are **synthesized, never captured**.
-- **Clear-text encoding is an assumption, not a fact.** The specification says binary XML and
-  compression are optional and negotiated; an overview document says they are used. If a real
-  server declines clear text, that is a scope change to report, not a fallback to absorb.
+- **Clear-text encoding is observed, not guaranteed.** The specification says binary XML and
+  compression are optional and NEGOTIATED; an overview document says they are used. Two live
+  instances have accepted clear text — one standalone, one domain-joined — which is evidence
+  about those servers, not a property of the protocol. If a server declines, that is still a
+  scope change to report, not a fallback to absorb.
 - **No port discovery.** The named-instance redirector on TCP 2382 has no public
   specification. Instances are addressed at a pinned port.
 - **Dependency surface is one package.** `pyspnego`, plus the standard library. Pulling in a
