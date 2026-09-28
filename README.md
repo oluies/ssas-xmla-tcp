@@ -37,6 +37,19 @@ OK - 1 data source(s):
 Verified against SQL Server 2022 Analysis Services, both a tabular and a multidimensional
 named instance, over NTLM.
 
+**Clear-text encoding is confirmed on a live server, not assumed.** [MS-SSAS] makes binary XML
+and compression optional and negotiated, while an overview document describes them as in use —
+so this client asks for clear text and raises `NegotiationError` if a server declines, rather
+than absorbing the refusal. A second instance, domain-joined and read with a domain account,
+has now answered that directly: `test_clear_text_negotiation_was_accepted` passes against it
+over NTLM, with the negotiated terms coming back `text/xml` and neither the request nor the
+response binary or compressed. In the same run `Discover` returned its data sources, its
+catalogs listed, a DAX statement evaluated, and a malformed one came back as the server's own
+error with its detail intact rather than as a protocol failure. Two servers are not every
+server, so the refusal path stays exactly where it is — D2 in
+[`specs/001-ssas-xmla-tcp/research.md`](specs/001-ssas-xmla-tcp/research.md) records what a
+decline would mean.
+
 **Kerberos is UNVERIFIED.** The handshake is mechanism-agnostic and should work, but the frame
 layer was recovered from, and has only ever been exercised against, an NTLM session: the chunk
 size is NTLM's `cbMaxToken`, the token length is NTLM's, and — the part that actually bites —
