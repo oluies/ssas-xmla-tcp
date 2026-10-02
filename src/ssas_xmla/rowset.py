@@ -32,6 +32,23 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _cell(element: ET.Element) -> str:
+    """One cell's value, including a nested document when it carries one.
+
+    A metadata rowset can put a whole XML document INSIDE a cell rather than a
+    scalar: DISCOVER_CSDL_METADATA returns the model's CSDL as element children of
+    <METADATA>, and DISCOVER_XML_METADATA does the same with ASSL. `element.text`
+    is then empty or whitespace, so reading only text discarded the entire payload
+    and produced a row with a blank cell -- indistinguishable, to every consumer,
+    from a server that sent nothing. The OpenMetadata connector's tabular path
+    ingested a database, a schema and zero tables that way, and reported success.
+    """
+    children = list(element)
+    if not children:
+        return element.text or ""
+    return "".join(ET.tostring(child, encoding="unicode") for child in children)
+
+
 def find_fault(text: str) -> tuple[str | None, str | None]:
     """Return (faultcode, faultstring) if the response carries a SOAP fault."""
     if "<Fault" not in text and "faultcode" not in text:
@@ -62,7 +79,7 @@ def parse(text: str) -> Rowset:
         row = {}
         for child in element:
             name = _local(child.tag)
-            row[name] = child.text or ""
+            row[name] = _cell(child)
             if name not in columns:
                 columns.append(name)
         rows.append(row)

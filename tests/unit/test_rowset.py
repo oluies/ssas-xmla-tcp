@@ -38,3 +38,36 @@ def test_no_fault_in_a_good_response():
 def test_rows_iterate():
     r = rowset.parse(synth.DISCOVER_DATASOURCES_RESPONSE)
     assert [row["DataSourceName"] for row in r] == ["Analysis Services"]
+
+
+def test_a_cell_carrying_a_document_keeps_it():
+    """A metadata rowset can put a whole document inside one cell. Reading only the
+    cell's own text discarded it and reported a blank cell, which no consumer could
+    tell apart from a server that sent nothing -- the OpenMetadata connector
+    ingested a database, a schema and zero tables that way, and called it success."""
+    r = rowset.parse(synth.CSDL_IN_A_CELL)
+    assert len(r) == 1
+    assert r.columns == ["METADATA"]
+    cell = r.rows[0]["METADATA"]
+    assert "EntityType" in cell
+    assert 'Name="DimProduct"' in cell
+    assert 'Name="ProductKey"' in cell
+
+
+def test_a_preserved_document_is_real_xml_not_a_description_of_one():
+    """The value has to parse, because every consumer of it parses it."""
+    import xml.etree.ElementTree as ET
+
+    cell = rowset.parse(synth.CSDL_IN_A_CELL).rows[0]["METADATA"]
+    root = ET.fromstring(cell)
+    names = [el.get("Name") for el in root.iter() if el.tag.endswith("EntityType")]
+    assert names == ["DimProduct"]
+
+
+def test_a_scalar_cell_is_untouched():
+    """The nested-document path must not change the ordinary case: these values are
+    read as strings by every caller, and a stray re-serialisation would show up as
+    markup in a catalog name."""
+    r = rowset.parse(synth.DISCOVER_DATASOURCES_RESPONSE)
+    assert r.rows[0]["DataSourceName"] == "Analysis Services"
+    assert "<" not in r.rows[0]["ProviderType"]
