@@ -184,3 +184,23 @@ def discover_properties_response(rows: list[dict[str, str]]) -> str:
         f"{body}"
         "</root></return></DiscoverResponse></Body></Envelope>"
     )
+
+
+# A metadata rowset puts a DOCUMENT inside one cell instead of a scalar. This is the
+# shape DISCOVER_CSDL_METADATA comes back in -- the model's CSDL as element children
+# of <METADATA>, which is why <METADATA> has no text of its own. Synthesized from the
+# shape, not captured: a real model's CSDL carries captions and column names from the
+# site that owns it.
+CSDL_IN_A_CELL = (
+    '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
+    '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+    '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">'
+    "<row><METADATA>"
+    '<Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm">'
+    '<EntityType Name="DimProduct">'
+    '<Property Name="ProductKey" Type="Int64" Nullable="false" />'
+    "</EntityType>"
+    "</Schema>"
+    "</METADATA></row>"
+    "</root></return></DiscoverResponse></Body></Envelope>"
+)
