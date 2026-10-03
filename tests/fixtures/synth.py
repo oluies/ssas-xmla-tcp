@@ -204,3 +204,31 @@ CSDL_IN_A_CELL = (
     "</METADATA></row>"
     "</root></return></DiscoverResponse></Body></Envelope>"
 )
+
+
+# Two element children in ONE cell, which is the shape that made concatenating
+# children wrong: DISCOVER_SCHEMA_ROWSETS puts <Name> and <Type> side by side in
+# its Restrictions cell, and `<Name/><Type/>` is a fragment, not a document.
+# Synthesized from that shape; the real response is 39KB of it.
+TWO_ELEMENTS_IN_A_CELL = (
+    '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
+    '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+    '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">'
+    "<row><SchemaName>DBSCHEMA_CATALOGS</SchemaName>"
+    "<Restrictions><Name>CATALOG_NAME</Name><Type>xsd:string</Type></Restrictions>"
+    "</row>"
+    "</root></return></DiscoverResponse></Body></Envelope>"
+)
+
+# A cell whose content contains elements named `row`. No recorded response does
+# this, but the parser walked the whole tree looking for rows, so a cell like it
+# would have been read twice: once as its parent's cell, once as rows of its own.
+ROWS_INSIDE_A_CELL = (
+    '<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body>'
+    '<DiscoverResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+    '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">'
+    "<row><OUTER>yes</OUTER>"
+    "<NESTED><row><INNER>a</INNER></row><row><INNER>b</INNER></row></NESTED>"
+    "</row>"
+    "</root></return></DiscoverResponse></Body></Envelope>"
+)
