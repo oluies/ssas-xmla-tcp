@@ -106,6 +106,21 @@ A `Rowset` carries ordered `columns` and `rows` of **string** values. Interpreti
 types, nullability, coercion — is the caller's business; the library does not guess at a type
 mapping that every consumer would then have to undo.
 
+A metadata rowset can put a whole **document** in one cell rather than a scalar, and the
+string then holds serialized markup: `DISCOVER_CSDL_METADATA` returns the model's CSDL inside
+`METADATA`, `DISCOVER_XML_METADATA` returns ASSL the same way, and `DISCOVER_SCHEMA_ROWSETS`
+puts several elements in its `Restrictions` cell. The value is the **cell element**,
+serialized — so it always parses, with the cell's own name as the single root — and it is a
+re-serialization rather than the bytes from the wire: ElementTree rewrites a default namespace
+to a generated prefix, so match on local names or namespace URIs rather than on literal markup.
+
+```python
+import xml.etree.ElementTree as ET
+
+cell = session.discover("DISCOVER_CSDL_METADATA", {"CATALOG_NAME": "Retail"}).rows[0]["METADATA"]
+model = ET.fromstring(cell)   # root is METADATA; the CSDL is inside it
+```
+
 ```python
 rows = session.columns("Retail")
 len(rows)          # row count

@@ -33,7 +33,8 @@ def _local(tag: str) -> str:
 
 
 def _cell(element: ET.Element) -> str:
-    """One cell's value, including a nested document when it carries one.
+    """One cell's value: its text, or the cell itself serialised when it carries
+    elements.
 
     A metadata rowset can put a whole XML document INSIDE a cell rather than a
     scalar: DISCOVER_CSDL_METADATA returns the model's CSDL as element children of
@@ -42,11 +43,23 @@ def _cell(element: ET.Element) -> str:
     and produced a row with a blank cell -- indistinguishable, to every consumer,
     from a server that sent nothing. The OpenMetadata connector's tabular path
     ingested a database, a schema and zero tables that way, and reported success.
+
+    The CELL is serialised, not its children. Concatenating children produced a
+    multi-root fragment for any cell carrying more than one, which is not a
+    document and raises on ET.fromstring -- and that is not hypothetical: the
+    `Restrictions` cell of DISCOVER_SCHEMA_ROWSETS holds `<Name>` and `<Type>`
+    side by side. Keeping the cell as the root means the value always parses, and
+    the root's name is one the server actually sent rather than a synthetic
+    wrapper.
+
+    It is a RE-serialisation, not the bytes from the wire: ElementTree rewrites a
+    default namespace to a generated prefix, so `<Schema xmlns="...edm">` comes
+    back as `<ns0:Schema xmlns:ns0="...edm">`. Consumers that match on local names
+    or namespace URIs are unaffected; one matching literal markup is not.
     """
-    children = list(element)
-    if not children:
+    if not len(element):
         return element.text or ""
-    return "".join(ET.tostring(child, encoding="unicode") for child in children)
+    return ET.tostring(element, encoding="unicode")
 
 
 def find_fault(text: str) -> tuple[str | None, str | None]:
@@ -73,9 +86,8 @@ def parse(text: str) -> Rowset:
         return Rowset()
     rows: list[dict[str, str]] = []
     columns: list[str] = []
-    for element in root.iter():
-        if _local(element.tag) != "row":
-            continue
+
+    def take(element: ET.Element) -> None:
         row = {}
         for child in element:
             name = _local(child.tag)
@@ -83,4 +95,24 @@ def parse(text: str) -> Rowset:
             if name not in columns:
                 columns.append(name)
         rows.append(row)
+
+    def walk(element: ET.Element) -> None:
+        """Find rows without descending INTO one.
+
+        `root.iter()` walked the whole tree, which contradicts what a cell now is:
+        a subtree that may itself contain elements named `row`. Those would be
+        emitted a second time as top-level rows, with their names appended to
+        `columns`, while the same content sits correctly inside the parent row's
+        cell.
+        """
+        for child in element:
+            if _local(child.tag) == "row":
+                take(child)
+            else:
+                walk(child)
+
+    if _local(root.tag) == "row":
+        take(root)
+    else:
+        walk(root)
     return Rowset(columns=columns, rows=rows)

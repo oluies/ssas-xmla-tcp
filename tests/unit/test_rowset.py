@@ -55,13 +55,56 @@ def test_a_cell_carrying_a_document_keeps_it():
 
 
 def test_a_preserved_document_is_real_xml_not_a_description_of_one():
-    """The value has to parse, because every consumer of it parses it."""
+    """The value has to parse, because every consumer of it parses it. The root is
+    the CELL -- a name the server sent -- so there is exactly one root whatever the
+    cell holds."""
     import xml.etree.ElementTree as ET
 
     cell = rowset.parse(synth.CSDL_IN_A_CELL).rows[0]["METADATA"]
     root = ET.fromstring(cell)
+    assert root.tag.rsplit("}", 1)[-1] == "METADATA"
     names = [el.get("Name") for el in root.iter() if el.tag.endswith("EntityType")]
     assert names == ["DimProduct"]
+
+
+def test_a_cell_with_several_children_still_parses():
+    """Concatenating a cell's children produced a multi-root fragment, and the
+    contract these tests state is that the value parses. DISCOVER_SCHEMA_ROWSETS
+    reaches it through the public API: its Restrictions cell holds <Name> and
+    <Type> side by side."""
+    import xml.etree.ElementTree as ET
+
+    r = rowset.parse(synth.TWO_ELEMENTS_IN_A_CELL)
+    cell = r.rows[0]["Restrictions"]
+    root = ET.fromstring(cell)  # would raise "junk after document element"
+    assert [el.tag.rsplit("}", 1)[-1] for el in root] == ["Name", "Type"]
+    assert r.rows[0]["SchemaName"] == "DBSCHEMA_CATALOGS"
+
+
+def test_the_namespace_survives_even_though_the_prefix_does_not():
+    """ElementTree re-serialises, so a default namespace comes back as a generated
+    prefix. The URI is the part consumers rely on, so that is what is asserted --
+    a test pinned to `xmlns="..."` would pass only by accident of ET's spelling."""
+    import xml.etree.ElementTree as ET
+
+    cell = rowset.parse(synth.CSDL_IN_A_CELL).rows[0]["METADATA"]
+    schema = next(el for el in ET.fromstring(cell).iter() if el.tag.rsplit("}", 1)[-1] == "Schema")
+    assert schema.tag == "{http://schemas.microsoft.com/ado/2008/09/edm}Schema"
+
+
+def test_rows_inside_a_cell_are_not_read_as_rows():
+    """The cell owns its subtree. Walking the whole tree for `row` elements read
+    such content twice: once as the parent's cell, once as rows of its own, with
+    the inner names leaking into `columns`."""
+    import xml.etree.ElementTree as ET
+
+    r = rowset.parse(synth.ROWS_INSIDE_A_CELL)
+    assert len(r) == 1
+    assert r.columns == ["OUTER", "NESTED"]
+    assert "INNER" not in r.columns
+    # the nested rows are still there -- inside the cell, where they belong
+    nested = ET.fromstring(r.rows[0]["NESTED"])
+    assert len([el for el in nested.iter() if el.tag.rsplit("}", 1)[-1] == "row"]) == 2
 
 
 def test_a_scalar_cell_is_untouched():
