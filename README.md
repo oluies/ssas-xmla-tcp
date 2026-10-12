@@ -91,7 +91,7 @@ python -m ssas_xmla.probe --host HOST --port PORT --mechanism ntlm
 cannot be carried by this frame layout, so `seal_frame` refuses it (exit 7). NTLM is the only
 path exercised end to end — see [Status](#status).
 
-Two lines go to **stderr at INFO**: the client version (`INFO ssas-xmla-tcp 0.1.1`) and, on a
+Two lines go to **stderr at INFO**: the client version (`INFO ssas-xmla-tcp 0.1.2`) and, on a
 successful run, the instance's `DBMSVersion` — so a bug report can name the revision and the
 server it was talking to. stdout stays the machine-readable result. When the version is not
 available the line says which reason applies — the request was declined, the server reports no
