@@ -1,7 +1,8 @@
 """The post-authentication frame layout.
 
-Recovered by decompiling AdomdClient; not documented in [MS-SSAS]. These tests
-pin the parts that were expensive to discover and are silently fatal if wrong.
+Not documented in [MS-SSAS]; this is the layout a live instance accepts, and
+docs/discovery-brief.md records how it was settled. These tests pin the parts
+that were expensive to discover and are silently fatal if wrong.
 """
 
 import struct
@@ -202,11 +203,11 @@ def test_a_short_sealed_body_inside_a_complete_dime_message_is_not_silent(short_
 
 
 # --- Kerberos-shaped contexts -------------------------------------------------
-# The decompile settles that the FRAMING is mechanism-agnostic: dispatch between
-# the two styles is decided solely by IsSchannelSspi(), and Negotiate, Kerberos and
-# NTLM all land in SecurityMode.Block -- same WriteInBlockMode, same 4-byte header,
-# same DATA-then-TOKEN order. What differs is the CONTEXT, in three ways, and each
-# is mocked here because no KDC is reachable from the hermetic suite.
+# The FRAMING is mechanism-agnostic: Negotiate, Kerberos and NTLM take the same
+# 4-byte header and the same DATA-then-TOKEN order, so nothing in this layer is
+# NTLM-specific (the basis is in docs/discovery-brief.md). What differs is the
+# CONTEXT, in three ways, and each is mocked here because no KDC is reachable
+# from the hermetic suite.
 
 
 class KerberosShapedContext:
@@ -264,9 +265,9 @@ def test_a_padding_mechanism_is_the_one_case_that_cannot_be_framed():
 
 
 def test_framing_is_identical_across_mechanisms():
-    """The claim the decompile actually makes: same header, same order, same code
-    path -- only the token length differs. Asserting it here means a future change
-    that special-cases a mechanism in the frame layer fails a test."""
+    """The claim being made is narrow: same header, same order, same code path --
+    only the token length differs. Asserting it here means a future change that
+    special-cases a mechanism in the frame layer fails a test."""
     payload = b"<Envelope>identical</Envelope>"
     ntlm = sealing.seal_message(FakeContext(), payload)
     krb = sealing.seal_message(KerberosShapedContext(), payload)
