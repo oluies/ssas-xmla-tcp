@@ -61,9 +61,9 @@ Kerberos-capable fixture or the reference client's answer for the unpadded lengt
 [`docs/discovery-brief.md`](docs/discovery-brief.md).
 
 The layer that took the longest is the post-authentication frame, which [MS-SSAS] does not
-document. It was recovered by decompiling `AdomdClient` and is implemented in
-[`sealing.py`](src/ssas_xmla/sealing.py); the reasoning is in
-[`docs/discovery-brief.md`](docs/discovery-brief.md).
+document. The layout implemented in [`sealing.py`](src/ssas_xmla/sealing.py) is the one a live
+instance accepts — nine framings were tried before it, and the record of how it was settled is
+in [`docs/discovery-brief.md`](docs/discovery-brief.md).
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the layers fit together.
 
