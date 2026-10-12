@@ -10,10 +10,13 @@ work, it is a separate feature rather than a quiet extension of this one.
 
 ## Kerberos is unverified
 
-NTLM is exercised end to end against a live SQL Server 2022 instance. Kerberos has never run
-against a KDC — the test fixture is a standalone workgroup machine, so its SSAS can only do
-NTLM. The framing work Kerberos needs is done and two of the three verification tiers are in
-the suite, but the result is not in hand. [Full detail](../connection/kerberos.md).
+NTLM is exercised end to end against two live instances, one of them domain-joined and read
+with a domain account. Kerberos has still never run against a KDC: the domain-joined runs
+authenticated with NTLM, and the original test fixture is a standalone workgroup machine whose
+SSAS can only do NTLM. So the obstacle is no longer the absence of a domain — it is that
+nothing has yet asked for a ticket. The framing work Kerberos needs is done and two of the
+three verification tiers are in the suite, but the result is not in hand.
+[Full detail](../connection/kerberos.md).
 
 **A mechanism that pads the plaintext cannot be framed at all**, and `seal_frame` raises
 rather than sending a body the server cannot parse.
