@@ -1,9 +1,9 @@
 """The post-authentication frame: how a sealed message is laid out on the wire.
 
 Every message after the handshake is sealed with the negotiated security context
-and wrapped in a 4-byte header. The layout was recovered by decompiling
-``Microsoft.AnalysisServices.AdomdClient`` (``TcpSecureStream.WriteHeader`` /
-``WriteInBlockMode``), because it is not in [MS-SSAS]:
+and wrapped in a 4-byte header. [MS-SSAS] does not document this layer; the layout
+below is the one a live instance accepts, and ``docs/discovery-brief.md`` records
+how it was settled -- nine framings were tried before this one:
 
     uint16  dataSize    little-endian, the ciphertext length
     uint16  tokenSize   little-endian, the security token length (16 for NTLM)
@@ -16,14 +16,13 @@ the connection with no error and logs nothing.
 
 Two details that are easy to miss and cost a lot to rediscover:
 
-- The UTF-8 BOM is sealed as its OWN frame before the body. The reference client
-  writes it through a StreamWriter, whose preamble is a separate write, so it
-  becomes a separate frame. We emit it because the reference client does; whether
-  the server *requires* it has not been tested independently. The working exchange
-  fixed two faults at once (byte order and the missing header plus BOM frame), so
-  the BOM was never varied on its own against a live server.
-- Frames are chunked at 2888 bytes for NTLM (the reference client reuses
-  ``cbMaxToken`` as the data chunk size). The hard ceiling is 65535, since
+- The UTF-8 BOM is sealed as its OWN frame before the body, rather than as the
+  first three bytes of the body's frame. We emit it because the reference client
+  does; whether the server *requires* it has not been tested independently. The
+  working exchange fixed two faults at once (byte order and the missing header
+  plus BOM frame), so the BOM was never varied on its own against a live server.
+- Frames are chunked at 2888 bytes for NTLM, which is that mechanism's
+  ``cbMaxToken`` reused as the data chunk size. The hard ceiling is 65535, since
   ``dataSize`` is a uint16.
 
 **UNVERIFIED for Kerberos.** Everything here was recovered from, and exercised
