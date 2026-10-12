@@ -67,6 +67,19 @@ OK - 1 data source(s):
 Verified against SQL Server 2022 Analysis Services, on both a tabular and a multidimensional
 named instance, over NTLM.
 
+**And driving a consumer, not just a probe.** An
+[OpenMetadata connector](https://github.com/oluies/ssas-openmetadata-connector) now reads a
+tabular model over this binding from a Linux container, with a least-privilege domain reader
+over NTLM: catalogs enumerated, the model's CSDL fetched and parsed into tables with typed
+columns, each measure's definition read from `MDSCHEMA_MEASURES`, and a few sample rows per
+table from `EVALUATE TOPN`. No IIS, no `msmdpump`, no Windows component in the path.
+
+That run also settles the encoding question on a second instance. The specification makes
+binary XML and compression optional and negotiated; both instances exercised so far — one
+standalone, one domain-joined — accepted clear text. That is evidence about those servers
+rather than a property of the protocol, so the client still asks for clear text and
+[fails loudly](./reference/errors.md#negotiationerror) if one declines.
+
 **Kerberos is UNVERIFIED.** The framing is mechanism-agnostic and Kerberos is expected to
 work, but it has never run against a KDC, and there is one shape the frame provably cannot
 carry — a mechanism that pads the plaintext. `seal_frame` raises rather than sending a body
