@@ -26,14 +26,14 @@ work from; nine attempts went into rediscovering this.
 
 :::
 
-The layer was recovered by decompiling `AdomdClient` — `TcpSecureStream.WriteHeader` and
-`WriteInBlockMode`.
+[MS-SSAS] does not document this layer at all. The layout above is the one a live instance
+accepts; nine framings were tried before it, and the record of how it was settled is in the
+repository's [discovery brief](https://github.com/oluies/ssas-xmla-tcp/blob/main/docs/discovery-brief.md).
 
 ## Three details that cost days
 
-**The UTF-8 BOM is sealed as its own frame**, before the body. The reference client writes the
-body through a `StreamWriter` whose preamble is a separate write, so the BOM arrives as a
-complete frame of its own rather than as the first three bytes of the body's frame.
+**The UTF-8 BOM is sealed as its own frame**, before the body — a complete frame of its own,
+not the first three bytes of the body's frame.
 
 **Sealing is mandatory.** It is not an optimisation the client can skip. An unsealed
 post-handshake message is dropped by the server with no error and nothing in its log — the
@@ -58,10 +58,10 @@ than silently truncating past it.
 
 ## What varies by mechanism, and what does not
 
-The framing is **mechanism-agnostic**: in `AdomdClient`, dispatch between the two framing
-styles is decided solely by `IsSchannelSspi()`, and Negotiate, Kerberos and NTLM all land in
-`SecurityMode.Block` — the same `WriteInBlockMode`, the same 4-byte header, the same
-DATA-then-TOKEN order.
+The framing is **mechanism-agnostic**: Negotiate, Kerberos and NTLM all take the same 4-byte
+header and the same ciphertext-then-token order, so nothing in this layer is NTLM-specific.
+Which of the two framing styles applies depends on the security package, not on the
+mechanism within it.
 
 Three things do vary:
 

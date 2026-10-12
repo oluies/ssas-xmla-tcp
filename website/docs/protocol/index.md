@@ -57,8 +57,8 @@ uses, so the SOAP envelopes and all response parsing are shared between bindings
 ## What the specification does not cover
 
 **The post-authentication frame.** [MS-SSAS] does not document it at all. Every message after
-the handshake is sealed and wrapped in a 4-byte header that appears in no specification. It
-was recovered by decompiling `AdomdClient`, and getting one field of it backwards is silently
+the handshake is sealed and wrapped in a 4-byte header that appears in no specification, and
+getting one field of it backwards is silently
 fatal — the server closes the connection with no error and logs nothing. This is the layer
 that took the longest; it has [its own page](./sealing.md).
 

@@ -17,12 +17,12 @@ page is backed by a live Kerberos session. Treat it as a reasoned position, not 
 run is the path that is not yet proven. That is why `--mechanism ntlm` appears in every
 example in [Getting Started](../getting-started.md).
 
-## What the decompile settled
+## What is settled, and what is not
 
 The question that mattered was whether the post-handshake frame is mechanism-specific. It is
-not. In `AdomdClient`, dispatch between the two framing styles is decided solely by
-`IsSchannelSspi()`, and Negotiate, Kerberos and NTLM all land in `SecurityMode.Block` — the
-same `WriteInBlockMode`, the same 4-byte header, the same DATA-then-TOKEN order.
+not: Negotiate, Kerberos and NTLM all take the same 4-byte header and the same
+ciphertext-then-token order, so nothing in that layer is NTLM-specific. The basis for this is
+recorded in the repository's [discovery brief](https://github.com/oluies/ssas-xmla-tcp/blob/main/docs/discovery-brief.md).
 
 **The framing is mechanism-agnostic.** Three things do differ, and all three are handled:
 

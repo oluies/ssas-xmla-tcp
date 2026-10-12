@@ -74,8 +74,9 @@ Every message after the handshake is sealed and wrapped in a 4-byte header:
 
 **Ciphertext first, token second** — the inverse of the GSS ordering `pyspnego` emits, and
 getting it backwards is silently fatal: the server closes the connection with no error and
-logs nothing. [MS-SSAS] does not document this layer; it was recovered by decompiling
-`AdomdClient` (`TcpSecureStream.WriteHeader` / `WriteInBlockMode`).
+logs nothing. [MS-SSAS] does not document this layer at all; the layout above is the one a
+live instance accepts, and [`docs/discovery-brief.md`](docs/discovery-brief.md) records how it
+was settled.
 
 Two details that cost days to rediscover, both now in the module docstring:
 
@@ -199,11 +200,12 @@ nothing.
 **Working over NTLM.** Discover, catalog listing and DAX execution all complete against a live
 SQL Server 2022 instance over NTLM, on both a tabular and a multidimensional named instance.
 
-**Kerberos is expected to work but is UNVERIFIED against a live server.** The decompile
-settles the part that mattered: dispatch between the two framing styles is decided solely by
-`IsSchannelSspi()`, and Negotiate, Kerberos and NTLM all land in `SecurityMode.Block` — the
-same `WriteInBlockMode`, the same 4-byte header, the same DATA-then-TOKEN order. **The framing
-is mechanism-agnostic.** Three things do differ, and all three are handled:
+**Kerberos is expected to work but is UNVERIFIED against a live server.** The part that
+mattered is settled: the frame does not vary by mechanism. Negotiate, Kerberos and NTLM take
+the same 4-byte header and the same ciphertext-then-token order, so nothing in this layer is
+NTLM-specific. **The framing is mechanism-agnostic** — see
+[`docs/discovery-brief.md`](docs/discovery-brief.md) for the basis. Three things do differ,
+and all three are handled:
 
 - **`tokenSize` is not 16.** It is `max(cbSecurityTrailer, cbMaxSignature)` queried at
   runtime; NTLM happens to give 16 and an AES etype gives substantially more. Nothing here
