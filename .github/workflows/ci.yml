@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
       - run: uvx ruff@0.6.9 check .
       - run: uvx ruff@0.6.9 format --check .
 
@@ -32,7 +32,7 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
       # Constitution III is NON-NEGOTIABLE: the suite runs with sockets disabled
       # and must pass on a machine that has never contacted an Analysis Services
       # instance. No service containers here, deliberately.
@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
       # Asserts the DECLARED dependency set, not just that an install succeeds.
       # The previous version ran `uv run --with pyspnego --with-editable .`, which
       # resolves whatever [project.dependencies] declares -- so adding a platform
