@@ -6,28 +6,74 @@
     ":dependencyDashboard"
   ],
   "timezone": "Europe/Stockholm",
-  "schedule": ["before 6am on monday"],
+  "schedule": [
+    "before 6am on monday"
+  ],
   "prConcurrentLimit": 3,
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "packageRules": [
     {
       "description": "pyspnego is the ONLY runtime dependency, and it is the security layer -- it generates and consumes GSS/SPNEGO tokens. A bump changes authentication behaviour, so it gets its own PR and is never grouped or automerged.",
-      "matchPackageNames": ["pyspnego"],
+      "matchPackageNames": [
+        "pyspnego"
+      ],
       "groupName": null,
       "automerge": false,
-      "addLabels": ["security-surface"]
+      "addLabels": [
+        "security-surface"
+      ]
     },
     {
       "description": "Dev tooling only runs in CI and cannot affect the wire protocol.",
-      "matchPackageNames": ["pytest", "pytest-socket", "ruff"],
+      "matchPackageNames": [
+        "pytest",
+        "pytest-socket",
+        "ruff"
+      ],
       "groupName": "dev tooling"
     },
     {
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github actions",
       "pinDigests": false
+    },
+    {
+      "description": [
+        "@mermaid-js/layout-elk is not a direct choice -- it exists only to satisfy",
+        "@docusaurus/theme-mermaid, which declares it as an optional peer. Renovate",
+        "does not read that peer range, so it keeps offering versions Docusaurus has",
+        "not declared support for, and each attempt also fails its own artifact step",
+        "(package.json moves, package-lock.json does not, and `npm ci` then refuses:",
+        "\"lock file's @mermaid-js/layout-elk@0.1.9 does not satisfy @0.2.3\").",
+        "",
+        "As of theme-mermaid 3.10.2 the declared peer is still ^0.1.9. Its canary",
+        "builds (3.10.1-canary-6805 and later) have moved to ^0.2.3, so 0.2.x is",
+        "where this is heading -- but no STABLE release declares it yet, and no",
+        "version at all, canary included, declares the 1.x line.",
+        "",
+        "Capped here so the backlog stays quiet. Lift this to match whatever",
+        "theme-mermaid declares once a stable release ships ^0.2.x; the pin is",
+        "deliberately tied to that peer range, not to a preference."
+      ],
+      "matchPackageNames": [
+        "@mermaid-js/layout-elk"
+      ],
+      "allowedVersions": "<0.2.0"
     }
   ],
-  "pep621": { "enabled": true },
-  "vulnerabilityAlerts": { "labels": ["security"], "schedule": ["at any time"] }
+  "pep621": {
+    "enabled": true
+  },
+  "vulnerabilityAlerts": {
+    "labels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ]
+  }
 }
